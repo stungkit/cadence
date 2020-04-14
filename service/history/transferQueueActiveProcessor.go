@@ -30,6 +30,7 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 const (
@@ -43,7 +44,7 @@ type (
 		queueAckMgr
 
 		currentClusterName string
-		shard              ShardContext
+		shard              shard.Context
 		transferTaskFilter taskFilter
 		logger             log.Logger
 		metricsClient      metrics.Client
@@ -52,7 +53,7 @@ type (
 )
 
 func newTransferQueueActiveProcessor(
-	shard ShardContext,
+	shard shard.Context,
 	historyService *historyEngineImpl,
 	visibilityMgr persistence.VisibilityManager,
 	matchingClient matching.Client,
@@ -74,6 +75,7 @@ func newTransferQueueActiveProcessor(
 		MaxRetryCount:                       config.TransferTaskMaxRetryCount,
 		RedispatchInterval:                  config.TransferProcessorRedispatchInterval,
 		RedispatchIntervalJitterCoefficient: config.TransferProcessorRedispatchIntervalJitterCoefficient,
+		MaxRedispatchQueueSize:              config.TransferProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.TransferProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.TransferActiveQueueProcessorScope,
 	}
@@ -158,6 +160,7 @@ func newTransferQueueActiveProcessor(
 		historyService.historyCache,
 		transferQueueTaskInitializer,
 		logger,
+		shard.GetMetricsClient().Scope(metrics.TransferActiveQueueProcessorScope),
 	)
 	processor.queueAckMgr = queueAckMgr
 	processor.queueProcessorBase = queueProcessorBase
@@ -166,7 +169,7 @@ func newTransferQueueActiveProcessor(
 }
 
 func newTransferQueueFailoverProcessor(
-	shard ShardContext,
+	shard shard.Context,
 	historyService *historyEngineImpl,
 	visibilityMgr persistence.VisibilityManager,
 	matchingClient matching.Client,
@@ -192,6 +195,7 @@ func newTransferQueueFailoverProcessor(
 		MaxRetryCount:                       config.TransferTaskMaxRetryCount,
 		RedispatchInterval:                  config.TransferProcessorRedispatchInterval,
 		RedispatchIntervalJitterCoefficient: config.TransferProcessorRedispatchIntervalJitterCoefficient,
+		MaxRedispatchQueueSize:              config.TransferProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.TransferProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.TransferActiveQueueProcessorScope,
 	}
@@ -291,6 +295,7 @@ func newTransferQueueFailoverProcessor(
 		historyService.historyCache,
 		transferQueueTaskInitializer,
 		logger,
+		shard.GetMetricsClient().Scope(metrics.TransferActiveQueueProcessorScope),
 	)
 	processor.queueAckMgr = queueAckMgr
 	processor.queueProcessorBase = queueProcessorBase

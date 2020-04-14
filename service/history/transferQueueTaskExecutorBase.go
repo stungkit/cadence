@@ -32,6 +32,8 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/worker/archiver"
 )
 
@@ -41,23 +43,23 @@ const (
 
 type (
 	transferQueueTaskExecutorBase struct {
-		shard          ShardContext
+		shard          shard.Context
 		historyService *historyEngineImpl
 		cache          *historyCache
 		logger         log.Logger
 		metricsClient  metrics.Client
 		matchingClient matching.Client
 		visibilityMgr  persistence.VisibilityManager
-		config         *Config
+		config         *config.Config
 	}
 )
 
 func newTransferQueueTaskExecutorBase(
-	shard ShardContext,
+	shard shard.Context,
 	historyService *historyEngineImpl,
 	logger log.Logger,
 	metricsClient metrics.Client,
-	config *Config,
+	config *config.Config,
 ) *transferQueueTaskExecutorBase {
 	return &transferQueueTaskExecutorBase{
 		shard:          shard,
@@ -143,6 +145,7 @@ func (t *transferQueueTaskExecutorBase) recordWorkflowStarted(
 	executionTimeUnixNano int64,
 	workflowTimeout int32,
 	taskID int64,
+	taskList string,
 	visibilityMemo *workflow.Memo,
 	searchAttributes map[string][]byte,
 ) error {
@@ -175,6 +178,7 @@ func (t *transferQueueTaskExecutorBase) recordWorkflowStarted(
 		WorkflowTimeout:    int64(workflowTimeout),
 		TaskID:             taskID,
 		Memo:               visibilityMemo,
+		TaskList:           taskList,
 		SearchAttributes:   searchAttributes,
 	}
 
@@ -190,6 +194,7 @@ func (t *transferQueueTaskExecutorBase) upsertWorkflowExecution(
 	executionTimeUnixNano int64,
 	workflowTimeout int32,
 	taskID int64,
+	taskList string,
 	visibilityMemo *workflow.Memo,
 	searchAttributes map[string][]byte,
 ) error {
@@ -217,6 +222,7 @@ func (t *transferQueueTaskExecutorBase) upsertWorkflowExecution(
 		WorkflowTimeout:    int64(workflowTimeout),
 		TaskID:             taskID,
 		Memo:               visibilityMemo,
+		TaskList:           taskList,
 		SearchAttributes:   searchAttributes,
 	}
 
@@ -235,6 +241,7 @@ func (t *transferQueueTaskExecutorBase) recordWorkflowClosed(
 	historyLength int64,
 	taskID int64,
 	visibilityMemo *workflow.Memo,
+	taskList string,
 	searchAttributes map[string][]byte,
 ) error {
 
@@ -281,6 +288,7 @@ func (t *transferQueueTaskExecutorBase) recordWorkflowClosed(
 			RetentionSeconds:   retentionSeconds,
 			TaskID:             taskID,
 			Memo:               visibilityMemo,
+			TaskList:           taskList,
 			SearchAttributes:   searchAttributes,
 		}); err != nil {
 			return err

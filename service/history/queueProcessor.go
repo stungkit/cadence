@@ -36,6 +36,7 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/quotas"
 	"github.com/uber/cadence/common/service/dynamicconfig"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 type (
@@ -51,6 +52,7 @@ type (
 		MaxRetryCount                       dynamicconfig.IntPropertyFn
 		RedispatchInterval                  dynamicconfig.DurationPropertyFn
 		RedispatchIntervalJitterCoefficient dynamicconfig.FloatPropertyFn
+		MaxRedispatchQueueSize              dynamicconfig.IntPropertyFn
 		EnablePriorityTaskProcessor         dynamicconfig.BoolPropertyFn
 		MetricScope                         int
 	}
@@ -59,12 +61,12 @@ type (
 
 	queueProcessorBase struct {
 		clusterName          string
-		shard                ShardContext
+		shard                shard.Context
 		timeSource           clock.TimeSource
 		options              *QueueProcessorOptions
 		processor            processor
 		logger               log.Logger
-		metricsClient        metrics.Client
+		metricsScope         metrics.Scope
 		rateLimiter          quotas.Limiter // Read rate limiter
 		ackMgr               queueAckMgr
 		taskProcessor        *taskProcessor // TODO: deprecate task processor, in favor of queueTaskProcessor
@@ -89,7 +91,7 @@ var (
 
 func newQueueProcessorBase(
 	clusterName string,
-	shard ShardContext,
+	shard shard.Context,
 	options *QueueProcessorOptions,
 	processor processor,
 	queueTaskProcessor queueTaskProcessor,
@@ -98,6 +100,7 @@ func newQueueProcessorBase(
 	historyCache *historyCache,
 	queueTaskInitializer queueTaskInitializer,
 	logger log.Logger,
+	metricsScope metrics.Scope,
 ) *queueProcessorBase {
 
 	var taskProcessor *taskProcessor
@@ -123,8 +126,8 @@ func newQueueProcessorBase(
 		status:               common.DaemonStatusInitialized,
 		notifyCh:             make(chan struct{}, 1),
 		shutdownCh:           make(chan struct{}),
-		metricsClient:        shard.GetMetricsClient(),
 		logger:               logger,
+		metricsScope:         metricsScope,
 		ackMgr:               queueAckMgr,
 		lastPollTime:         time.Time{},
 		taskProcessor:        taskProcessor,
@@ -210,7 +213,15 @@ processorPumpLoop:
 			// use a separate gorouting since the caller hold the shutdownWG
 			go p.Stop()
 		case <-p.notifyCh:
-			p.processBatch()
+			if !p.isPriorityTaskProcessorEnabled() || p.redispatchQueue.Len() <= p.options.MaxRedispatchQueueSize() {
+				p.processBatch()
+				continue
+			}
+
+			// has too many pending tasks in re-dispatch queue, block loading tasks from persistence
+			p.redispatchTasks()
+			// re-enqueue the event to see if we need keep re-dispatching or load new tasks from persistence
+			p.notifyNewTask()
 		case <-pollTimer.C:
 			pollTimer.Reset(backoff.JitDuration(
 				p.options.MaxPollInterval(),
@@ -224,7 +235,7 @@ processorPumpLoop:
 				p.options.UpdateAckInterval(),
 				p.options.UpdateAckIntervalJitterCoefficient(),
 			))
-			if err := p.ackMgr.updateQueueAckLevel(); err == ErrShardClosed {
+			if err := p.ackMgr.updateQueueAckLevel(); err == shard.ErrShardClosed {
 				// shard is no longer owned by this instance, bail out
 				go p.Stop()
 				break processorPumpLoop
@@ -319,6 +330,7 @@ func (p *queueProcessorBase) redispatchTasks() {
 		p.redispatchQueue,
 		p.queueTaskProcessor,
 		p.logger,
+		p.metricsScope,
 		p.shutdownCh,
 	)
 }
@@ -343,9 +355,11 @@ func redispatchQueueTasks(
 	redispatchQueue collection.Queue,
 	queueTaskProcessor queueTaskProcessor,
 	logger log.Logger,
+	metricsScope metrics.Scope,
 	shutdownCh <-chan struct{},
 ) {
 	queueLength := redispatchQueue.Len()
+	metricsScope.RecordTimer(metrics.TaskRedispatchQueuePendingTasksTimer, time.Duration(queueLength))
 	for i := 0; i != queueLength; i++ {
 		queueTask := redispatchQueue.Remove().(queueTask)
 		submitted, err := queueTaskProcessor.TrySubmit(queueTask)

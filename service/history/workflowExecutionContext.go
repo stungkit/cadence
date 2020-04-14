@@ -36,6 +36,9 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/engine"
+	"github.com/uber/cadence/service/history/events"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 const (
@@ -49,6 +52,7 @@ type (
 		getExecution() *workflow.WorkflowExecution
 
 		loadWorkflowExecution() (mutableState, error)
+		loadWorkflowExecutionForReplication(incomingVersion int64) (mutableState, error)
 		loadExecutionStats() (*persistence.ExecutionStats, error)
 		clear()
 
@@ -134,8 +138,8 @@ type (
 	workflowExecutionContextImpl struct {
 		domainID          string
 		workflowExecution workflow.WorkflowExecution
-		shard             ShardContext
-		engine            Engine
+		shard             shard.Context
+		engine            engine.Engine
 		executionManager  persistence.ExecutionManager
 		logger            log.Logger
 		metricsClient     metrics.Client
@@ -157,7 +161,7 @@ var (
 func newWorkflowExecutionContext(
 	domainID string,
 	execution workflow.WorkflowExecution,
-	shard ShardContext,
+	shard shard.Context,
 	executionManager persistence.ExecutionManager,
 	logger log.Logger,
 ) *workflowExecutionContextImpl {
@@ -223,6 +227,83 @@ func (c *workflowExecutionContextImpl) loadExecutionStats() (*persistence.Execut
 		return nil, err
 	}
 	return c.stats, nil
+}
+
+func (c *workflowExecutionContextImpl) loadWorkflowExecutionForReplication(
+	incomingVersion int64,
+) (mutableState, error) {
+
+	domainEntry, err := c.shard.GetDomainCache().GetDomainByID(c.domainID)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.mutableState == nil {
+		response, err := c.getWorkflowExecutionWithRetry(&persistence.GetWorkflowExecutionRequest{
+			DomainID:  c.domainID,
+			Execution: c.workflowExecution,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		c.mutableState = newMutableStateBuilder(
+			c.shard,
+			c.shard.GetEventsCache(),
+			c.logger,
+			domainEntry,
+		)
+
+		c.mutableState.Load(response.State)
+
+		c.stats = response.State.ExecutionStats
+		c.updateCondition = response.State.ExecutionInfo.NextEventID
+
+		// finally emit execution and session stats
+		emitWorkflowExecutionStats(
+			c.metricsClient,
+			c.getDomainName(),
+			response.MutableStateStats,
+			c.stats.HistorySize,
+		)
+	}
+
+	lastWriteVersion, err := c.mutableState.GetLastWriteVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	if lastWriteVersion == incomingVersion {
+		err = c.mutableState.StartTransactionSkipDecisionFail(domainEntry)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		flushBeforeReady, err := c.mutableState.StartTransaction(domainEntry)
+		if err != nil {
+			return nil, err
+		}
+		if !flushBeforeReady {
+			return c.mutableState, nil
+		}
+
+		if err = c.updateWorkflowExecutionAsActive(
+			c.shard.GetTimeSource().Now(),
+		); err != nil {
+			return nil, err
+		}
+
+		flushBeforeReady, err = c.mutableState.StartTransaction(domainEntry)
+		if err != nil {
+			return nil, err
+		}
+		if flushBeforeReady {
+			return nil, &workflow.InternalServiceError{
+				Message: "workflowExecutionContext counter flushBeforeReady status after loading mutable state from DB",
+			}
+		}
+	}
+	return c.mutableState, nil
 }
 
 func (c *workflowExecutionContextImpl) loadWorkflowExecution() (mutableState, error) {
@@ -463,7 +544,7 @@ func (c *workflowExecutionContextImpl) conflictResolveWorkflowExecution(
 
 	workflowState, workflowCloseState := resetMutableState.GetWorkflowStateCloseStatus()
 	// Current branch changed and notify the watchers
-	c.engine.NotifyNewHistoryEvent(newHistoryEventNotification(
+	c.engine.NotifyNewHistoryEvent(events.NewNotification(
 		c.domainID,
 		&c.workflowExecution,
 		resetMutableState.GetLastFirstEventID(),
@@ -660,7 +741,7 @@ func (c *workflowExecutionContextImpl) updateWorkflowExecutionWithNew(
 		return err
 	}
 	workflowState, workflowCloseState := c.mutableState.GetWorkflowStateCloseStatus()
-	c.engine.NotifyNewHistoryEvent(newHistoryEventNotification(
+	c.engine.NotifyNewHistoryEvent(events.NewNotification(
 		c.domainID,
 		&c.workflowExecution,
 		c.mutableState.GetLastFirstEventID(),

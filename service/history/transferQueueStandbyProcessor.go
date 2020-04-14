@@ -28,6 +28,8 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/xdc"
+	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 type (
@@ -37,8 +39,8 @@ type (
 		queueAckMgr
 
 		clusterName        string
-		shard              ShardContext
-		config             *Config
+		shard              shard.Context
+		config             *config.Config
 		transferTaskFilter taskFilter
 		logger             log.Logger
 		metricsClient      metrics.Client
@@ -48,7 +50,7 @@ type (
 
 func newTransferQueueStandbyProcessor(
 	clusterName string,
-	shard ShardContext,
+	shard shard.Context,
 	historyService *historyEngineImpl,
 	visibilityMgr persistence.VisibilityManager,
 	matchingClient matching.Client,
@@ -71,6 +73,7 @@ func newTransferQueueStandbyProcessor(
 		MaxRetryCount:                       config.TransferTaskMaxRetryCount,
 		RedispatchInterval:                  config.TransferProcessorRedispatchInterval,
 		RedispatchIntervalJitterCoefficient: config.TransferProcessorRedispatchIntervalJitterCoefficient,
+		MaxRedispatchQueueSize:              config.TransferProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.TransferProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.TransferStandbyQueueProcessorScope,
 	}
@@ -158,6 +161,7 @@ func newTransferQueueStandbyProcessor(
 		historyService.historyCache,
 		transferQueueTaskInitializer,
 		logger,
+		shard.GetMetricsClient().Scope(metrics.TransferStandbyQueueProcessorScope),
 	)
 
 	processor.queueAckMgr = queueAckMgr

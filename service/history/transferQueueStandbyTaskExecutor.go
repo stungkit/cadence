@@ -30,6 +30,8 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/xdc"
+	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 type (
@@ -43,14 +45,14 @@ type (
 )
 
 func newTransferQueueStandbyTaskExecutor(
-	shard ShardContext,
+	shard shard.Context,
 	historyService *historyEngineImpl,
 	historyRereplicator xdc.HistoryRereplicator,
 	nDCHistoryResender xdc.NDCHistoryResender,
 	logger log.Logger,
 	metricsClient metrics.Client,
 	clusterName string,
-	config *Config,
+	config *config.Config,
 ) queueTaskExecutor {
 	return &transferQueueStandbyTaskExecutor{
 		transferQueueTaskExecutorBase: newTransferQueueTaskExecutorBase(
@@ -250,6 +252,7 @@ func (t *transferQueueStandbyTaskExecutor) processCloseExecution(
 			workflowHistoryLength,
 			transferTask.GetTaskID(),
 			visibilityMemo,
+			executionInfo.TaskList,
 			searchAttr,
 		)
 	}
@@ -442,6 +445,7 @@ func (t *transferQueueStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertH
 			executionTimestamp.UnixNano(),
 			workflowTimeout,
 			transferTask.GetTaskID(),
+			executionInfo.TaskList,
 			visibilityMemo,
 			searchAttr,
 		)
@@ -455,6 +459,7 @@ func (t *transferQueueStandbyTaskExecutor) processRecordWorkflowStartedOrUpsertH
 		executionTimestamp.UnixNano(),
 		workflowTimeout,
 		transferTask.GetTaskID(),
+		executionInfo.TaskList,
 		visibilityMemo,
 		searchAttr,
 	)

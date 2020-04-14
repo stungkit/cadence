@@ -35,12 +35,13 @@ import (
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/shard"
 )
 
 type (
 	replicatorQueueProcessorImpl struct {
 		currentClusterName    string
-		shard                 ShardContext
+		shard                 shard.Context
 		historyCache          *historyCache
 		replicationTaskFilter taskFilter
 		executionMgr          persistence.ExecutionManager
@@ -66,7 +67,7 @@ var (
 )
 
 func newReplicatorQueueProcessor(
-	shard ShardContext,
+	shard shard.Context,
 	historyCache *historyCache,
 	replicator messaging.Producer,
 	executionMgr persistence.ExecutionManager,
@@ -88,6 +89,7 @@ func newReplicatorQueueProcessor(
 		MaxRetryCount:                       config.ReplicatorTaskMaxRetryCount,
 		RedispatchInterval:                  config.ReplicatorProcessorRedispatchInterval,
 		RedispatchIntervalJitterCoefficient: config.ReplicatorProcessorRedispatchIntervalJitterCoefficient,
+		MaxRedispatchQueueSize:              config.ReplicatorProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.ReplicatorProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.ReplicatorQueueProcessorScope,
 	}
@@ -129,6 +131,7 @@ func newReplicatorQueueProcessor(
 		historyCache,
 		nil, // there's no queueTask implementation for replication task
 		logger,
+		shard.GetMetricsClient().Scope(metrics.ReplicatorQueueProcessorScope),
 	)
 	processor.queueAckMgr = queueAckMgr
 	processor.queueProcessorBase = queueProcessorBase
