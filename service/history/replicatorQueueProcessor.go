@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+//TODO move this file to replication subfolder
+
 package history
 
 import (
@@ -35,15 +37,17 @@ import (
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
+	"github.com/uber/cadence/service/history/task"
 )
 
 type (
 	replicatorQueueProcessorImpl struct {
 		currentClusterName    string
 		shard                 shard.Context
-		historyCache          *historyCache
-		replicationTaskFilter taskFilter
+		executionCache        *execution.Cache
+		replicationTaskFilter task.Filter
 		executionMgr          persistence.ExecutionManager
 		historyV2Mgr          persistence.HistoryManager
 		replicator            messaging.Producer
@@ -68,7 +72,7 @@ var (
 
 func newReplicatorQueueProcessor(
 	shard shard.Context,
-	historyCache *historyCache,
+	executionCache *execution.Cache,
 	replicator messaging.Producer,
 	executionMgr persistence.ExecutionManager,
 	historyV2Mgr persistence.HistoryManager,
@@ -96,7 +100,7 @@ func newReplicatorQueueProcessor(
 
 	logger = logger.WithTags(tag.ComponentReplicatorQueue)
 
-	replicationTaskFilter := func(taskInfo queueTaskInfo) (bool, error) {
+	replicationTaskFilter := func(taskInfo task.Info) (bool, error) {
 		return true, nil
 	}
 
@@ -107,7 +111,7 @@ func newReplicatorQueueProcessor(
 	processor := &replicatorQueueProcessorImpl{
 		currentClusterName:    currentClusterName,
 		shard:                 shard,
-		historyCache:          historyCache,
+		executionCache:        executionCache,
 		replicationTaskFilter: replicationTaskFilter,
 		executionMgr:          executionMgr,
 		historyV2Mgr:          historyV2Mgr,
@@ -128,7 +132,7 @@ func newReplicatorQueueProcessor(
 		nil, // replicator queue processor will soon be deprecated and won't use priority task processor
 		queueAckMgr,
 		nil, // replicator queue processor will soon be deprecated and won't use redispatch queue
-		historyCache,
+		executionCache,
 		nil, // there's no queueTask implementation for replication task
 		logger,
 		shard.GetMetricsClient().Scope(metrics.ReplicatorQueueProcessorScope),
@@ -139,7 +143,7 @@ func newReplicatorQueueProcessor(
 	return processor
 }
 
-func (p *replicatorQueueProcessorImpl) getTaskFilter() taskFilter {
+func (p *replicatorQueueProcessorImpl) getTaskFilter() task.Filter {
 	return p.replicationTaskFilter
 }
 
@@ -208,27 +212,51 @@ func (p *replicatorQueueProcessorImpl) processHistoryReplicationTask(
 	}
 
 	err = p.replicator.Publish(replicationTask)
-	if err == messaging.ErrMessageSizeLimit && replicationTask.HistoryTaskAttributes != nil {
+	if err == messaging.ErrMessageSizeLimit {
 		// message size exceeds the server messaging size limit
 		// for this specific case, just send out a metadata message and
 		// let receiver fetch from source (for the concrete history events)
-		err = p.replicator.Publish(p.generateHistoryMetadataTask(replicationTask.HistoryTaskAttributes.TargetClusters, task))
+		if metadataTask := p.generateHistoryMetadataTask(
+			task,
+			replicationTask,
+		); metadataTask != nil {
+			err = p.replicator.Publish(metadataTask)
+		}
 	}
 	return err
 }
 
-func (p *replicatorQueueProcessorImpl) generateHistoryMetadataTask(targetClusters []string, task *persistence.ReplicationTaskInfo) *replicator.ReplicationTask {
-	return &replicator.ReplicationTask{
-		TaskType: replicator.ReplicationTaskTypeHistoryMetadata.Ptr(),
-		HistoryMetadataTaskAttributes: &replicator.HistoryMetadataTaskAttributes{
-			TargetClusters: targetClusters,
-			DomainId:       common.StringPtr(task.DomainID),
-			WorkflowId:     common.StringPtr(task.WorkflowID),
-			RunId:          common.StringPtr(task.RunID),
-			FirstEventId:   common.Int64Ptr(task.FirstEventID),
-			NextEventId:    common.Int64Ptr(task.NextEventID),
-		},
+func (p *replicatorQueueProcessorImpl) generateHistoryMetadataTask(
+	task *persistence.ReplicationTaskInfo,
+	replicationTask *replicator.ReplicationTask,
+) *replicator.ReplicationTask {
+
+	if replicationTask.HistoryTaskAttributes != nil {
+		return &replicator.ReplicationTask{
+			TaskType: replicator.ReplicationTaskTypeHistoryMetadata.Ptr(),
+			HistoryMetadataTaskAttributes: &replicator.HistoryMetadataTaskAttributes{
+				TargetClusters: replicationTask.HistoryTaskAttributes.TargetClusters,
+				DomainId:       common.StringPtr(task.DomainID),
+				WorkflowId:     common.StringPtr(task.WorkflowID),
+				RunId:          common.StringPtr(task.RunID),
+				FirstEventId:   common.Int64Ptr(task.FirstEventID),
+				NextEventId:    common.Int64Ptr(task.NextEventID),
+			},
+		}
+	} else if replicationTask.HistoryTaskV2Attributes != nil {
+		return &replicator.ReplicationTask{
+			TaskType: replicator.ReplicationTaskTypeHistoryMetadata.Ptr(),
+			HistoryMetadataTaskAttributes: &replicator.HistoryMetadataTaskAttributes{
+				DomainId:     common.StringPtr(task.DomainID),
+				WorkflowId:   common.StringPtr(task.WorkflowID),
+				RunId:        common.StringPtr(task.RunID),
+				FirstEventId: common.Int64Ptr(task.FirstEventID),
+				NextEventId:  common.Int64Ptr(task.NextEventID),
+				Version:      common.Int64Ptr(task.Version),
+			},
+		}
 	}
+	return nil
 }
 
 // GenerateReplicationTask generate replication task
@@ -295,7 +323,7 @@ func GenerateReplicationTask(
 	return ret, newRunID, nil
 }
 
-func (p *replicatorQueueProcessorImpl) readTasks(readLevel int64) ([]queueTaskInfo, bool, error) {
+func (p *replicatorQueueProcessorImpl) readTasks(readLevel int64) ([]task.Info, bool, error) {
 	return p.readTasksWithBatchSize(readLevel, p.options.BatchSize())
 }
 
@@ -346,7 +374,7 @@ func GetAllHistory(
 	var pageHistorySize int
 
 	for hasMore := true; hasMore; hasMore = len(pageToken) > 0 {
-		pageHistoryEvents, pageHistoryBatches, pageToken, pageHistorySize, err = PaginateHistory(
+		pageHistoryEvents, pageHistoryBatches, pageToken, pageHistorySize, err = persistence.PaginateHistory(
 			historyV2Mgr, byBatch,
 			branchToken, firstEventID, nextEventID,
 			pageToken, defaultHistoryPageSize, shardID,
@@ -371,57 +399,6 @@ func GetAllHistory(
 	return history, historyBatches, nil
 }
 
-// PaginateHistory return paged history
-func PaginateHistory(
-	historyV2Mgr persistence.HistoryManager,
-	byBatch bool,
-	branchToken []byte,
-	firstEventID int64,
-	nextEventID int64,
-	tokenIn []byte,
-	pageSize int,
-	shardID *int,
-) ([]*shared.HistoryEvent, []*shared.History, []byte, int, error) {
-
-	historyEvents := []*shared.HistoryEvent{}
-	historyBatches := []*shared.History{}
-	var tokenOut []byte
-	var historySize int
-
-	req := &persistence.ReadHistoryBranchRequest{
-		BranchToken:   branchToken,
-		MinEventID:    firstEventID,
-		MaxEventID:    nextEventID,
-		PageSize:      pageSize,
-		NextPageToken: tokenIn,
-		ShardID:       shardID,
-	}
-	if byBatch {
-		response, err := historyV2Mgr.ReadHistoryBranchByBatch(req)
-		if err != nil {
-			return nil, nil, nil, 0, err
-		}
-
-		// Keep track of total history size
-		historySize += response.Size
-		historyBatches = append(historyBatches, response.History...)
-		tokenOut = response.NextPageToken
-
-	} else {
-		response, err := historyV2Mgr.ReadHistoryBranch(req)
-		if err != nil {
-			return nil, nil, nil, 0, err
-		}
-
-		// Keep track of total history size
-		historySize += response.Size
-		historyEvents = append(historyEvents, response.HistoryEvents...)
-		tokenOut = response.NextPageToken
-	}
-
-	return historyEvents, historyBatches, tokenOut, historySize, nil
-}
-
 // TODO deprecate when 3+DC is released
 func convertLastReplicationInfo(info map[string]*persistence.ReplicationInfo) map[string]*shared.ReplicationInfo {
 	replicationInfoMap := make(map[string]*shared.ReplicationInfo)
@@ -444,7 +421,7 @@ func (p *replicatorQueueProcessorImpl) getTasks(
 	lastReadTaskID int64,
 ) (*replicator.ReplicationMessages, error) {
 
-	if lastReadTaskID == emptyMessageID {
+	if lastReadTaskID == common.EmptyMessageID {
 		lastReadTaskID = p.shard.GetClusterReplicationLevel(pollingCluster)
 	}
 
@@ -527,7 +504,7 @@ func (p *replicatorQueueProcessorImpl) getTask(
 	return p.toReplicationTask(ctx, task)
 }
 
-func (p *replicatorQueueProcessorImpl) readTasksWithBatchSize(readLevel int64, batchSize int) ([]queueTaskInfo, bool, error) {
+func (p *replicatorQueueProcessorImpl) readTasksWithBatchSize(readLevel int64, batchSize int) ([]task.Info, bool, error) {
 	response, err := p.executionMgr.GetReplicationTasks(&persistence.GetReplicationTasksRequest{
 		ReadLevel:    readLevel,
 		MaxReadLevel: p.shard.GetTransferMaxReadLevel(),
@@ -538,7 +515,7 @@ func (p *replicatorQueueProcessorImpl) readTasksWithBatchSize(readLevel int64, b
 		return nil, false, err
 	}
 
-	tasks := make([]queueTaskInfo, len(response.Tasks))
+	tasks := make([]task.Info, len(response.Tasks))
 	for i := range response.Tasks {
 		tasks[i] = response.Tasks[i]
 	}
@@ -548,7 +525,7 @@ func (p *replicatorQueueProcessorImpl) readTasksWithBatchSize(readLevel int64, b
 
 func (p *replicatorQueueProcessorImpl) toReplicationTask(
 	ctx ctx.Context,
-	qTask queueTaskInfo,
+	qTask task.Info,
 ) (*replicator.ReplicationTask, error) {
 
 	task, ok := qTask.(*persistence.ReplicationTaskInfo)
@@ -585,7 +562,7 @@ func (p *replicatorQueueProcessorImpl) generateSyncActivityTask(
 		taskInfo.GetDomainID(),
 		taskInfo.GetWorkflowID(),
 		taskInfo.GetRunID(),
-		func(mutableState mutableState) (*replicator.ReplicationTask, error) {
+		func(mutableState execution.MutableState) (*replicator.ReplicationTask, error) {
 			activityInfo, ok := mutableState.GetActivityInfo(taskInfo.ScheduledID)
 			if !ok {
 				return nil, nil
@@ -646,7 +623,7 @@ func (p *replicatorQueueProcessorImpl) generateHistoryReplicationTask(
 		task.GetDomainID(),
 		task.GetWorkflowID(),
 		task.GetRunID(),
-		func(mutableState mutableState) (*replicator.ReplicationTask, error) {
+		func(mutableState execution.MutableState) (*replicator.ReplicationTask, error) {
 
 			versionHistories := mutableState.GetVersionHistories()
 
@@ -779,7 +756,7 @@ func (p *replicatorQueueProcessorImpl) getEventsBlob(
 }
 
 func (p *replicatorQueueProcessorImpl) getVersionHistoryItems(
-	mutableState mutableState,
+	mutableState execution.MutableState,
 	eventID int64,
 	version int64,
 ) ([]*shared.VersionHistoryItem, []byte, error) {
@@ -814,7 +791,7 @@ func (p *replicatorQueueProcessorImpl) processReplication(
 	domainID string,
 	workflowID string,
 	runID string,
-	action func(mutableState) (*replicator.ReplicationTask, error),
+	action func(execution.MutableState) (*replicator.ReplicationTask, error),
 ) (retReplicationTask *replicator.ReplicationTask, retError error) {
 
 	execution := shared.WorkflowExecution{
@@ -822,13 +799,13 @@ func (p *replicatorQueueProcessorImpl) processReplication(
 		RunId:      common.StringPtr(runID),
 	}
 
-	context, release, err := p.historyCache.getOrCreateWorkflowExecution(ctx, domainID, execution)
+	context, release, err := p.executionCache.GetOrCreateWorkflowExecution(ctx, domainID, execution)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { release(retError) }()
 
-	msBuilder, err := context.loadWorkflowExecution()
+	msBuilder, err := context.LoadWorkflowExecution()
 	switch err.(type) {
 	case nil:
 		if !processTaskIfClosed && !msBuilder.IsWorkflowExecutionRunning() {
@@ -850,7 +827,7 @@ func (p *replicatorQueueProcessorImpl) isNewRunNDCEnabled(
 	runID string,
 ) (isNDCWorkflow bool, retError error) {
 
-	context, release, err := p.historyCache.getOrCreateWorkflowExecution(
+	context, release, err := p.executionCache.GetOrCreateWorkflowExecution(
 		ctx,
 		domainID,
 		shared.WorkflowExecution{
@@ -863,7 +840,7 @@ func (p *replicatorQueueProcessorImpl) isNewRunNDCEnabled(
 	}
 	defer func() { release(retError) }()
 
-	mutableState, err := context.loadWorkflowExecution()
+	mutableState, err := context.LoadWorkflowExecution()
 	if err != nil {
 		return false, err
 	}

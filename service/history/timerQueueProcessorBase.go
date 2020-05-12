@@ -37,7 +37,9 @@ import (
 	"github.com/uber/cadence/common/quotas"
 	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
+	"github.com/uber/cadence/service/history/task"
 )
 
 var (
@@ -52,7 +54,7 @@ type (
 		scope                int
 		shard                shard.Context
 		historyService       *historyEngineImpl
-		cache                *historyCache
+		cache                *execution.Cache
 		executionManager     persistence.ExecutionManager
 		status               int32
 		shutdownWG           sync.WaitGroup
@@ -70,7 +72,7 @@ type (
 		retryPolicy          backoff.RetryPolicy
 		lastPollTime         time.Time
 		taskProcessor        *taskProcessor // TODO: deprecate task processor, in favor of queueTaskProcessor
-		queueTaskProcessor   queueTaskProcessor
+		queueTaskProcessor   task.Processor
 		redispatchQueue      collection.Queue
 		queueTaskInitializer queueTaskInitializer
 
@@ -86,7 +88,7 @@ func newTimerQueueProcessorBase(
 	shard shard.Context,
 	historyService *historyEngineImpl,
 	timerProcessor timerProcessor,
-	queueTaskProcessor queueTaskProcessor,
+	queueTaskProcessor task.Processor,
 	timerQueueAckMgr timerQueueAckMgr,
 	redispatchQueue collection.Queue,
 	queueTaskInitializer queueTaskInitializer,
@@ -105,7 +107,7 @@ func newTimerQueueProcessorBase(
 			workerCount: config.TimerTaskWorkerCount(),
 			queueSize:   config.TimerTaskWorkerCount() * config.TimerTaskBatchSize(),
 		}
-		taskProcessor = newTaskProcessor(options, shard, historyService.historyCache, logger)
+		taskProcessor = newTaskProcessor(options, shard, historyService.executionCache, logger)
 	}
 
 	base := &timerQueueProcessorBase{
@@ -113,7 +115,7 @@ func newTimerQueueProcessorBase(
 		shard:                shard,
 		historyService:       historyService,
 		timerProcessor:       timerProcessor,
-		cache:                historyService.historyCache,
+		cache:                historyService.executionCache,
 		executionManager:     shard.GetExecutionManager(),
 		status:               common.DaemonStatusInitialized,
 		shutdownCh:           make(chan struct{}),
@@ -369,7 +371,7 @@ func (t *timerQueueProcessorBase) readAndFanoutTimerTasks() (*persistence.TimerT
 }
 
 func (t *timerQueueProcessorBase) submitTask(
-	taskInfo queueTaskInfo,
+	taskInfo task.Info,
 ) bool {
 	if !t.isPriorityTaskProcessorEnabled() {
 		return t.taskProcessor.addTask(

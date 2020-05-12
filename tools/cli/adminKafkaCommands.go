@@ -23,13 +23,11 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/uber/cadence/common/auth"
-
 	"io"
 	"io/ioutil"
 	"os"
@@ -46,12 +44,15 @@ import (
 	"github.com/urfave/cli"
 	"go.uber.org/thriftrw/protocol"
 	"go.uber.org/thriftrw/wire"
-	yaml "gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
 
+	"github.com/uber/cadence/.gen/go/admin"
+	serverAdmin "github.com/uber/cadence/.gen/go/admin/adminserviceclient"
 	"github.com/uber/cadence/.gen/go/indexer"
 	"github.com/uber/cadence/.gen/go/replicator"
 	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
+	"github.com/uber/cadence/common/auth"
 	"github.com/uber/cadence/common/log/loggerimpl"
 	"github.com/uber/cadence/common/messaging"
 	"github.com/uber/cadence/common/persistence"
@@ -60,10 +61,18 @@ import (
 	"github.com/uber/cadence/service/history"
 )
 
-type filterFn func(*replicator.ReplicationTask) bool
-type filterFnForVisibility func(*indexer.Message) bool
+type (
+	filterFn              func(*replicator.ReplicationTask) bool
+	filterFnForVisibility func(*indexer.Message) bool
 
-type kafkaMessageType int
+	kafkaMessageType int
+
+	historyV2Task struct {
+		Task         *replicator.ReplicationTask
+		Events       []*shared.HistoryEvent
+		NewRunEvents []*shared.HistoryEvent
+	}
+)
 
 const (
 	kafkaMessageTypeReplicationTask kafkaMessageType = iota
@@ -71,11 +80,12 @@ const (
 )
 
 const (
-	bufferSize                 = 8192
-	preambleVersion0      byte = 0x59
-	malformedMessage           = "Input was malformed"
-	chanBufferSize             = 10000
-	maxRereplicateEventID      = 999999
+	bufferSize                       = 8192
+	preambleVersion0            byte = 0x59
+	malformedMessage                 = "Input was malformed"
+	chanBufferSize                   = 10000
+	maxRereplicateEventID            = 999999
+	defaultResendContextTimeout      = 30 * time.Second
 )
 
 var (
@@ -121,13 +131,14 @@ func AdminKafkaParse(c *cli.Context) {
 	readerCh := make(chan []byte, chanBufferSize)
 	writerCh := newWriterChannel(kafkaMessageType(c.Int(FlagMessageType)))
 	doneCh := make(chan struct{})
+	serializer := persistence.NewPayloadSerializer()
 
 	var skippedCount int32
 	skipErrMode := c.Bool(FlagSkipErrorMode)
 
 	go startReader(inputFile, readerCh)
 	go startParser(readerCh, writerCh, skipErrMode, &skippedCount)
-	go startWriter(outputFile, writerCh, doneCh, &skippedCount, c)
+	go startWriter(outputFile, writerCh, doneCh, &skippedCount, serializer, c)
 
 	<-doneCh
 
@@ -242,6 +253,7 @@ func startWriter(
 	writerCh *writerChannel,
 	doneCh chan struct{},
 	skippedCount *int32,
+	serializer persistence.PayloadSerializer,
 	c *cli.Context,
 ) {
 
@@ -252,7 +264,7 @@ func startWriter(
 
 	switch writerCh.Type {
 	case kafkaMessageTypeReplicationTask:
-		writeReplicationTask(outputFile, writerCh, skippedCount, skipErrMode, headerMode, c)
+		writeReplicationTask(outputFile, writerCh, skippedCount, skipErrMode, headerMode, serializer, c)
 	case kafkaMessageTypeVisibilityMsg:
 		writeVisibilityMessage(outputFile, writerCh, skippedCount, skipErrMode, headerMode, c)
 	}
@@ -264,6 +276,7 @@ func writeReplicationTask(
 	skippedCount *int32,
 	skipErrMode bool,
 	headerMode bool,
+	serializer persistence.PayloadSerializer,
 	c *cli.Context,
 ) {
 	filter := buildFilterFn(c.String(FlagWorkflowID), c.String(FlagRunID))
@@ -275,7 +288,7 @@ Loop:
 				break Loop
 			}
 			if filter(task) {
-				jsonStr, err := json.Marshal(task)
+				jsonStr, err := decodeReplicationTask(task, serializer)
 				if err != nil {
 					if !skipErrMode {
 						ErrorAndExit(malformedMessage, fmt.Errorf("failed to encode into json, err: %v", err))
@@ -473,7 +486,21 @@ type ClustersConfig struct {
 	TLS      auth.TLS
 }
 
-func doRereplicate(shardID int, domainID, wid, rid string, minID, maxID int64, targets []string, producer messaging.Producer, session *gocql.Session) {
+func doRereplicate(
+	ctx context.Context,
+	shardID int,
+	domainID string,
+	wid string,
+	rid string,
+	minID int64,
+	maxID int64,
+	startVersion *int64,
+	targets []string,
+	producer messaging.Producer,
+	session *gocql.Session,
+	adminClient serverAdmin.Interface,
+) {
+
 	if minID <= 0 {
 		minID = 1
 	}
@@ -498,6 +525,26 @@ func doRereplicate(shardID int, domainID, wid, rid string, minID, maxID int64, t
 		})
 		if err != nil {
 			ErrorAndExit("GetWorkflowExecution error", err)
+		}
+
+		versionHistories := resp.State.VersionHistories
+		if versionHistories != nil {
+			if startVersion == nil {
+				ErrorAndExit("Use input file to resend NDC workflow is not support", nil)
+			}
+			if err := adminClient.ResendReplicationTasks(
+				ctx,
+				&admin.ResendReplicationTasksRequest{
+					DomainID:      common.StringPtr(domainID),
+					WorkflowID:    common.StringPtr(wid),
+					RunID:         common.StringPtr(rid),
+					RemoteCluster: common.StringPtr(targets[0]),
+					StartVersion:  startVersion,
+				},
+			); err != nil {
+				ErrorAndExit("Failed to resend ndc workflow", err)
+			}
+			return
 		}
 
 		currVersion := resp.State.ReplicationState.CurrentVersion
@@ -583,8 +630,22 @@ func AdminRereplicate(c *cli.Context) {
 	target := getRequiredOption(c, FlagTargetCluster)
 	targets := []string{target}
 
-	producer := newKafkaProducer(c)
 	session := connectToCassandra(c)
+	adminClient := cFactory.ServerAdminClient(c)
+	var startVersion *int64
+	var producer messaging.Producer
+	if c.IsSet(FlagStartEventVersion) {
+		startVersion = common.Int64Ptr(c.Int64(FlagStartEventVersion))
+	} else {
+		producer = newKafkaProducer(c)
+	}
+
+	contextTimeout := defaultResendContextTimeout
+	if c.GlobalIsSet(FlagContextTimeout) {
+		contextTimeout = time.Duration(c.GlobalInt(FlagContextTimeout)) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
+	defer cancel()
 
 	if c.IsSet(FlagInputFile) {
 		inFile := c.String(FlagInputFile)
@@ -631,7 +692,7 @@ func AdminRereplicate(c *cli.Context) {
 			}
 
 			shardID := common.WorkflowIDToHistoryShard(wid, numberOfShards)
-			doRereplicate(shardID, domainID, wid, rid, minID, maxID, targets, producer, session)
+			doRereplicate(ctx, shardID, domainID, wid, rid, minID, maxID, startVersion, targets, producer, session, adminClient)
 			fmt.Printf("Done processing line %v ...\n", idx)
 		}
 		if err := scanner.Err(); err != nil {
@@ -643,9 +704,9 @@ func AdminRereplicate(c *cli.Context) {
 		rid := getRequiredOption(c, FlagRunID)
 		minID := c.Int64(FlagMinEventID)
 		maxID := c.Int64(FlagMaxEventID)
-
 		shardID := common.WorkflowIDToHistoryShard(wid, numberOfShards)
-		doRereplicate(shardID, domainID, wid, rid, minID, maxID, targets, producer, session)
+
+		doRereplicate(ctx, shardID, domainID, wid, rid, minID, maxID, startVersion, targets, producer, session, adminClient)
 	}
 }
 
@@ -898,4 +959,40 @@ func loadBrokerConfig(hostFile string, cluster string) ([]string, *tls.Config, e
 		}
 	}
 	return nil, nil, fmt.Errorf("failed to load broker for cluster %v", cluster)
+}
+
+func decodeReplicationTask(
+	task *replicator.ReplicationTask,
+	serializer persistence.PayloadSerializer,
+) ([]byte, error) {
+
+	switch task.GetTaskType() {
+	case replicator.ReplicationTaskTypeHistoryV2:
+		historyV2 := task.GetHistoryTaskV2Attributes()
+		events, err := serializer.DeserializeBatchEvents(
+			persistence.NewDataBlobFromThrift(historyV2.Events),
+		)
+		if err != nil {
+			return nil, err
+		}
+		var newRunEvents []*shared.HistoryEvent
+		if historyV2.IsSetNewRunEvents() {
+			newRunEvents, err = serializer.DeserializeBatchEvents(
+				persistence.NewDataBlobFromThrift(historyV2.NewRunEvents),
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
+		historyV2.Events = nil
+		historyV2.NewRunEvents = nil
+		historyV2Attributes := &historyV2Task{
+			Task:         task,
+			Events:       events,
+			NewRunEvents: newRunEvents,
+		}
+		return json.Marshal(historyV2Attributes)
+	default:
+		return json.Marshal(task)
+	}
 }

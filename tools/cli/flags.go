@@ -48,6 +48,7 @@ const (
 	FlagTargetCluster                     = "target_cluster"
 	FlagMinEventID                        = "min_event_id"
 	FlagMaxEventID                        = "max_event_id"
+	FlagStartEventVersion                 = "start_event_version"
 	FlagTaskList                          = "tasklist"
 	FlagTaskListWithAlias                 = FlagTaskList + ", tl"
 	FlagTaskListType                      = "tasklisttype"
@@ -220,6 +221,11 @@ const (
 	FlagLowerShardBound                   = "lower_shard_bound"
 	FlagUpperShardBound                   = "upper_shard_bound"
 	FlagInputDirectory                    = "input_directory"
+	FlagSkipHistoryChecks                 = "skip_history_checks"
+	FlagFailoverType                      = "failover_type"
+	FlagFailoverTypeWithAlias             = FlagFailoverType + ", ft"
+	FlagFailoverTimeout                   = "failover_timeout_seconds"
+	FlagFailoverTimeoutWithAlias          = FlagFailoverTimeout + ", fts"
 )
 
 var flagsForExecution = []cli.Flag{
