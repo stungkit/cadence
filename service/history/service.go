@@ -30,11 +30,11 @@ import (
 	"github.com/uber/cadence/common/persistence"
 	persistenceClient "github.com/uber/cadence/common/persistence/client"
 	espersistence "github.com/uber/cadence/common/persistence/elasticsearch"
-	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
 	sconfig "github.com/uber/cadence/common/service/config"
 	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/history/config"
+	"github.com/uber/cadence/service/history/resource"
 )
 
 // Service represents the cadence-history service
@@ -52,7 +52,8 @@ type Service struct {
 func NewService(
 	params *service.BootstrapParams,
 ) (resource.Resource, error) {
-	serviceConfig := config.New(dynamicconfig.NewCollection(params.DynamicConfig, params.Logger),
+	serviceConfig := config.New(
+		dynamicconfig.NewCollection(params.DynamicConfig, params.Logger),
 		params.PersistenceConfig.NumHistoryShards,
 		params.PersistenceConfig.DefaultStoreType(),
 		params.PersistenceConfig.IsAdvancedVisibilityConfigExist())
@@ -91,9 +92,7 @@ func NewService(
 	serviceResource, err := resource.New(
 		params,
 		common.HistoryServiceName,
-		serviceConfig.PersistenceMaxQPS,
-		serviceConfig.PersistenceGlobalMaxQPS,
-		serviceConfig.ThrottledLogRPS,
+		serviceConfig,
 		visibilityManagerInitializer,
 	)
 	if err != nil {

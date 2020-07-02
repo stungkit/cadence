@@ -25,11 +25,11 @@ import (
 
 	"github.com/uber/cadence/client/history"
 	"github.com/uber/cadence/client/matching"
-	"github.com/uber/cadence/common/collection"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
+	"github.com/uber/cadence/service/history/queue"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
@@ -59,7 +59,7 @@ func newTransferQueueActiveProcessor(
 	visibilityMgr persistence.VisibilityManager,
 	matchingClient matching.Client,
 	historyClient history.Client,
-	taskAllocator taskAllocator,
+	taskAllocator queue.TaskAllocator,
 	queueTaskProcessor task.Processor,
 	logger log.Logger,
 ) *transferQueueActiveProcessorImpl {
@@ -79,6 +79,7 @@ func newTransferQueueActiveProcessor(
 		MaxRedispatchQueueSize:              config.TransferProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.TransferProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.TransferActiveQueueProcessorScope,
+		QueueType:                           task.QueueTypeActiveTransfer,
 	}
 	currentClusterName := shard.GetService().GetClusterMetadata().GetCurrentClusterName()
 	logger = logger.WithTags(tag.ClusterName(currentClusterName))
@@ -87,8 +88,9 @@ func newTransferQueueActiveProcessor(
 		if !ok {
 			return false, errUnexpectedQueueTask
 		}
-		return taskAllocator.verifyActiveTask(task.DomainID, task)
+		return taskAllocator.VerifyActiveTask(task.DomainID, task)
 	}
+
 	maxReadAckLevel := func() int64 {
 		return shard.GetTransferMaxReadLevel()
 	}
@@ -134,25 +136,6 @@ func newTransferQueueActiveProcessor(
 		logger,
 	)
 
-	redispatchQueue := collection.NewConcurrentQueue()
-
-	transferQueueTaskInitializer := func(taskInfo task.Info) task.Task {
-		return task.NewTransferTask(
-			shard,
-			taskInfo,
-			historyService.metricsClient.Scope(
-				getTransferTaskMetricsScope(taskInfo.GetTaskType(), true),
-			),
-			initializeLoggerForTask(shard.GetShardID(), taskInfo, logger),
-			transferTaskFilter,
-			processor.taskExecutor,
-			redispatchQueue,
-			shard.GetTimeSource(),
-			options.MaxRetryCount,
-			queueAckMgr,
-		)
-	}
-
 	queueProcessorBase := newQueueProcessorBase(
 		currentClusterName,
 		shard,
@@ -160,15 +143,15 @@ func newTransferQueueActiveProcessor(
 		processor,
 		queueTaskProcessor,
 		queueAckMgr,
-		redispatchQueue,
 		historyService.executionCache,
-		transferQueueTaskInitializer,
+		transferTaskFilter,
+		processor.taskExecutor,
 		logger,
 		shard.GetMetricsClient().Scope(metrics.TransferActiveQueueProcessorScope),
 	)
+
 	processor.queueAckMgr = queueAckMgr
 	processor.queueProcessorBase = queueProcessorBase
-
 	return processor
 }
 
@@ -182,7 +165,7 @@ func newTransferQueueFailoverProcessor(
 	standbyClusterName string,
 	minLevel int64,
 	maxLevel int64,
-	taskAllocator taskAllocator,
+	taskAllocator queue.TaskAllocator,
 	queueTaskProcessor task.Processor,
 	logger log.Logger,
 ) (func(ackLevel int64) error, *transferQueueActiveProcessorImpl) {
@@ -202,6 +185,7 @@ func newTransferQueueFailoverProcessor(
 		MaxRedispatchQueueSize:              config.TransferProcessorMaxRedispatchQueueSize,
 		EnablePriorityTaskProcessor:         config.TransferProcessorEnablePriorityTaskProcessor,
 		MetricScope:                         metrics.TransferActiveQueueProcessorScope,
+		QueueType:                           task.QueueTypeActiveTransfer,
 	}
 	currentClusterName := shard.GetService().GetClusterMetadata().GetCurrentClusterName()
 	failoverUUID := uuid.New()
@@ -216,8 +200,9 @@ func newTransferQueueFailoverProcessor(
 		if !ok {
 			return false, errUnexpectedQueueTask
 		}
-		return taskAllocator.verifyFailoverActiveTask(domainIDs, task.DomainID, task)
+		return taskAllocator.VerifyFailoverActiveTask(domainIDs, task.DomainID, task)
 	}
+
 	maxReadAckLevel := func() int64 {
 		return maxLevel // this is a const
 	}
@@ -272,25 +257,6 @@ func newTransferQueueFailoverProcessor(
 		logger,
 	)
 
-	redispatchQueue := collection.NewConcurrentQueue()
-
-	transferQueueTaskInitializer := func(taskInfo task.Info) task.Task {
-		return task.NewTransferTask(
-			shard,
-			taskInfo,
-			historyService.metricsClient.Scope(
-				getTransferTaskMetricsScope(taskInfo.GetTaskType(), true),
-			),
-			initializeLoggerForTask(shard.GetShardID(), taskInfo, logger),
-			transferTaskFilter,
-			processor.taskExecutor,
-			redispatchQueue,
-			shard.GetTimeSource(),
-			options.MaxRetryCount,
-			queueAckMgr,
-		)
-	}
-
 	queueProcessorBase := newQueueProcessorBase(
 		currentClusterName,
 		shard,
@@ -298,12 +264,13 @@ func newTransferQueueFailoverProcessor(
 		processor,
 		queueTaskProcessor,
 		queueAckMgr,
-		redispatchQueue,
 		historyService.executionCache,
-		transferQueueTaskInitializer,
+		transferTaskFilter,
+		processor.taskExecutor,
 		logger,
 		shard.GetMetricsClient().Scope(metrics.TransferActiveQueueProcessorScope),
 	)
+
 	processor.queueAckMgr = queueAckMgr
 	processor.queueProcessorBase = queueProcessorBase
 	return updateTransferAckLevel, processor
@@ -328,6 +295,6 @@ func (t *transferQueueActiveProcessorImpl) process(
 	taskInfo *taskInfo,
 ) (int, error) {
 	// TODO: task metricScope should be determined when creating taskInfo
-	metricScope := getTransferTaskMetricsScope(taskInfo.task.GetTaskType(), true)
+	metricScope := task.GetTransferTaskMetricsScope(taskInfo.task.GetTaskType(), true)
 	return metricScope, t.taskExecutor.Execute(taskInfo.task, taskInfo.shouldProcessTask)
 }

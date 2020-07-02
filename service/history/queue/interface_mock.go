@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2020 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -195,15 +195,15 @@ func (mr *MockProcessingQueueMockRecorder) Merge(arg0 interface{}) *gomock.Call 
 }
 
 // AddTasks mocks base method
-func (m *MockProcessingQueue) AddTasks(arg0 map[task.Key]task.Task) {
+func (m *MockProcessingQueue) AddTasks(arg0 map[task.Key]task.Task, arg1 task.Key) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AddTasks", arg0)
+	m.ctrl.Call(m, "AddTasks", arg0, arg1)
 }
 
 // AddTasks indicates an expected call of AddTasks
-func (mr *MockProcessingQueueMockRecorder) AddTasks(arg0 interface{}) *gomock.Call {
+func (mr *MockProcessingQueueMockRecorder) AddTasks(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTasks", reflect.TypeOf((*MockProcessingQueue)(nil).AddTasks), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTasks", reflect.TypeOf((*MockProcessingQueue)(nil).AddTasks), arg0, arg1)
 }
 
 // UpdateAckLevel mocks base method
@@ -278,6 +278,20 @@ func (m *MockProcessingQueueCollection) EXPECT() *MockProcessingQueueCollectionM
 	return m.recorder
 }
 
+// Level mocks base method
+func (m *MockProcessingQueueCollection) Level() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Level")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// Level indicates an expected call of Level
+func (mr *MockProcessingQueueCollectionMockRecorder) Level() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Level", reflect.TypeOf((*MockProcessingQueueCollection)(nil).Level))
+}
+
 // Queues mocks base method
 func (m *MockProcessingQueueCollection) Queues() []ProcessingQueue {
 	m.ctrl.T.Helper()
@@ -290,6 +304,44 @@ func (m *MockProcessingQueueCollection) Queues() []ProcessingQueue {
 func (mr *MockProcessingQueueCollectionMockRecorder) Queues() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Queues", reflect.TypeOf((*MockProcessingQueueCollection)(nil).Queues))
+}
+
+// ActiveQueue mocks base method
+func (m *MockProcessingQueueCollection) ActiveQueue() ProcessingQueue {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ActiveQueue")
+	ret0, _ := ret[0].(ProcessingQueue)
+	return ret0
+}
+
+// ActiveQueue indicates an expected call of ActiveQueue
+func (mr *MockProcessingQueueCollectionMockRecorder) ActiveQueue() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveQueue", reflect.TypeOf((*MockProcessingQueueCollection)(nil).ActiveQueue))
+}
+
+// AddTasks mocks base method
+func (m *MockProcessingQueueCollection) AddTasks(arg0 map[task.Key]task.Task, arg1 task.Key) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "AddTasks", arg0, arg1)
+}
+
+// AddTasks indicates an expected call of AddTasks
+func (mr *MockProcessingQueueCollectionMockRecorder) AddTasks(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTasks", reflect.TypeOf((*MockProcessingQueueCollection)(nil).AddTasks), arg0, arg1)
+}
+
+// UpdateAckLevels mocks base method
+func (m *MockProcessingQueueCollection) UpdateAckLevels() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "UpdateAckLevels")
+}
+
+// UpdateAckLevels indicates an expected call of UpdateAckLevels
+func (mr *MockProcessingQueueCollectionMockRecorder) UpdateAckLevels() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAckLevels", reflect.TypeOf((*MockProcessingQueueCollection)(nil).UpdateAckLevels))
 }
 
 // Split mocks base method
@@ -318,87 +370,97 @@ func (mr *MockProcessingQueueCollectionMockRecorder) Merge(arg0 interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Merge", reflect.TypeOf((*MockProcessingQueueCollection)(nil).Merge), arg0)
 }
 
-// AddTasks mocks base method
-func (m *MockProcessingQueueCollection) AddTasks(arg0 map[task.Key]task.Task) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AddTasks", arg0)
-}
-
-// AddTasks indicates an expected call of AddTasks
-func (mr *MockProcessingQueueCollectionMockRecorder) AddTasks(arg0 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTasks", reflect.TypeOf((*MockProcessingQueueCollection)(nil).AddTasks), arg0)
-}
-
-// ActiveQueue mocks base method
-func (m *MockProcessingQueueCollection) ActiveQueue() ProcessingQueue {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ActiveQueue")
-	ret0, _ := ret[0].(ProcessingQueue)
-	return ret0
-}
-
-// ActiveQueue indicates an expected call of ActiveQueue
-func (mr *MockProcessingQueueCollectionMockRecorder) ActiveQueue() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveQueue", reflect.TypeOf((*MockProcessingQueueCollection)(nil).ActiveQueue))
-}
-
-// MockProcessingQueueManager is a mock of ProcessingQueueManager interface
-type MockProcessingQueueManager struct {
+// MockProcessor is a mock of Processor interface
+type MockProcessor struct {
 	ctrl     *gomock.Controller
-	recorder *MockProcessingQueueManagerMockRecorder
+	recorder *MockProcessorMockRecorder
 }
 
-// MockProcessingQueueManagerMockRecorder is the mock recorder for MockProcessingQueueManager
-type MockProcessingQueueManagerMockRecorder struct {
-	mock *MockProcessingQueueManager
+// MockProcessorMockRecorder is the mock recorder for MockProcessor
+type MockProcessorMockRecorder struct {
+	mock *MockProcessor
 }
 
-// NewMockProcessingQueueManager creates a new mock instance
-func NewMockProcessingQueueManager(ctrl *gomock.Controller) *MockProcessingQueueManager {
-	mock := &MockProcessingQueueManager{ctrl: ctrl}
-	mock.recorder = &MockProcessingQueueManagerMockRecorder{mock}
+// NewMockProcessor creates a new mock instance
+func NewMockProcessor(ctrl *gomock.Controller) *MockProcessor {
+	mock := &MockProcessor{ctrl: ctrl}
+	mock.recorder = &MockProcessorMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use
-func (m *MockProcessingQueueManager) EXPECT() *MockProcessingQueueManagerMockRecorder {
+func (m *MockProcessor) EXPECT() *MockProcessorMockRecorder {
 	return m.recorder
 }
 
 // Start mocks base method
-func (m *MockProcessingQueueManager) Start() {
+func (m *MockProcessor) Start() {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "Start")
 }
 
 // Start indicates an expected call of Start
-func (mr *MockProcessingQueueManagerMockRecorder) Start() *gomock.Call {
+func (mr *MockProcessorMockRecorder) Start() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockProcessingQueueManager)(nil).Start))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockProcessor)(nil).Start))
 }
 
 // Stop mocks base method
-func (m *MockProcessingQueueManager) Stop() {
+func (m *MockProcessor) Stop() {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "Stop")
 }
 
 // Stop indicates an expected call of Stop
-func (mr *MockProcessingQueueManagerMockRecorder) Stop() *gomock.Call {
+func (mr *MockProcessorMockRecorder) Stop() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockProcessingQueueManager)(nil).Stop))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockProcessor)(nil).Stop))
 }
 
-// NotifyNewTasks mocks base method
-func (m *MockProcessingQueueManager) NotifyNewTasks(arg0 []persistence.Task) {
+// FailoverDomain mocks base method
+func (m *MockProcessor) FailoverDomain(domainIDs map[string]struct{}) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "NotifyNewTasks", arg0)
+	m.ctrl.Call(m, "FailoverDomain", domainIDs)
 }
 
-// NotifyNewTasks indicates an expected call of NotifyNewTasks
-func (mr *MockProcessingQueueManagerMockRecorder) NotifyNewTasks(arg0 interface{}) *gomock.Call {
+// FailoverDomain indicates an expected call of FailoverDomain
+func (mr *MockProcessorMockRecorder) FailoverDomain(domainIDs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyNewTasks", reflect.TypeOf((*MockProcessingQueueManager)(nil).NotifyNewTasks), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailoverDomain", reflect.TypeOf((*MockProcessor)(nil).FailoverDomain), domainIDs)
+}
+
+// NotifyNewTask mocks base method
+func (m *MockProcessor) NotifyNewTask(clusterName string, transferTasks []persistence.Task) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "NotifyNewTask", clusterName, transferTasks)
+}
+
+// NotifyNewTask indicates an expected call of NotifyNewTask
+func (mr *MockProcessorMockRecorder) NotifyNewTask(clusterName, transferTasks interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyNewTask", reflect.TypeOf((*MockProcessor)(nil).NotifyNewTask), clusterName, transferTasks)
+}
+
+// LockTaskProcessing mocks base method
+func (m *MockProcessor) LockTaskProcessing() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "LockTaskProcessing")
+}
+
+// LockTaskProcessing indicates an expected call of LockTaskProcessing
+func (mr *MockProcessorMockRecorder) LockTaskProcessing() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LockTaskProcessing", reflect.TypeOf((*MockProcessor)(nil).LockTaskProcessing))
+}
+
+// UnlockTaskProcessing mocks base method
+func (m *MockProcessor) UnlockTaskProcessing() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "UnlockTaskProcessing")
+}
+
+// UnlockTaskProcessing indicates an expected call of UnlockTaskProcessing
+func (mr *MockProcessorMockRecorder) UnlockTaskProcessing() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnlockTaskProcessing", reflect.TypeOf((*MockProcessor)(nil).UnlockTaskProcessing))
 }

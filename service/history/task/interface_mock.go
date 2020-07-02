@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2020 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -411,6 +411,20 @@ func (m *MockTask) GetShard() shard.Context {
 func (mr *MockTaskMockRecorder) GetShard() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetShard", reflect.TypeOf((*MockTask)(nil).GetShard))
+}
+
+// GetAttempt mocks base method
+func (m *MockTask) GetAttempt() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAttempt")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// GetAttempt indicates an expected call of GetAttempt
+func (mr *MockTaskMockRecorder) GetAttempt() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAttempt", reflect.TypeOf((*MockTask)(nil).GetAttempt))
 }
 
 // MockKey is a mock of Key interface

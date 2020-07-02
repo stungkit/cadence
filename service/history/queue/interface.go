@@ -55,7 +55,7 @@ type (
 		State() ProcessingQueueState
 		Split(ProcessingQueueSplitPolicy) []ProcessingQueue
 		Merge(ProcessingQueue) []ProcessingQueue
-		AddTasks(map[task.Key]task.Task)
+		AddTasks(map[task.Key]task.Task, task.Key)
 		UpdateAckLevel()
 		// TODO: add Offload() method
 	}
@@ -69,20 +69,22 @@ type (
 	// ProcessingQueueCollection manages a list of non-overlapping ProcessingQueues
 	// and keep track of the current active ProcessingQueue
 	ProcessingQueueCollection interface {
+		Level() int
 		Queues() []ProcessingQueue
+		ActiveQueue() ProcessingQueue
+		AddTasks(map[task.Key]task.Task, task.Key)
+		UpdateAckLevels()
 		Split(ProcessingQueueSplitPolicy) []ProcessingQueue
 		Merge([]ProcessingQueue)
-		AddTasks(map[task.Key]task.Task)
-		ActiveQueue() ProcessingQueue
 		// TODO: add Offload() method
 	}
 
-	// ProcessingQueueManager manages a set of ProcessingQueueCollection and
-	// controls the event loop for loading tasks, updating and persisting
-	// ProcessingQueueStates, spliting/merging ProcessingQueue, etc.
-	ProcessingQueueManager interface {
+	// Processor is the interface for task queue processor
+	Processor interface {
 		common.Daemon
-
-		NotifyNewTasks([]persistence.Task)
+		FailoverDomain(domainIDs map[string]struct{})
+		NotifyNewTask(clusterName string, transferTasks []persistence.Task)
+		LockTaskProcessing()
+		UnlockTaskProcessing()
 	}
 )

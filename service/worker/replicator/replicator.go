@@ -77,6 +77,7 @@ type (
 		ReplicationTaskContextTimeout      dynamicconfig.DurationPropertyFn
 		ReReplicationContextTimeout        dynamicconfig.DurationPropertyFnWithDomainIDFilter
 		EnableRPCReplication               dynamicconfig.BoolPropertyFn
+		EnableHistoryReplication           dynamicconfig.BoolPropertyFn
 	}
 )
 
@@ -142,12 +143,13 @@ func (r *Replicator) Start() error {
 		}
 	}
 
-	for _, processor := range r.processors {
-		if err := processor.Start(); err != nil {
-			return err
+	if r.config.EnableHistoryReplication() {
+		for _, processor := range r.processors {
+			if err := processor.Start(); err != nil {
+				return err
+			}
 		}
 	}
-
 	for _, domainProcessor := range r.domainProcessors {
 		domainProcessor.Start()
 	}
@@ -160,12 +162,12 @@ func (r *Replicator) createKafkaProcessors(currentClusterName string, clusterNam
 	adminClient := admin.NewRetryableClient(
 		r.clientBean.GetRemoteAdminClient(clusterName),
 		common.CreateAdminServiceRetryPolicy(),
-		common.IsWhitelistServiceTransientError,
+		common.IsServiceTransientError,
 	)
 	historyClient := history.NewRetryableClient(
 		r.historyClient,
 		common.CreateHistoryServiceRetryPolicy(),
-		common.IsWhitelistServiceTransientError,
+		common.IsServiceTransientError,
 	)
 	logger := r.logger.WithTags(tag.ComponentReplicationTaskProcessor, tag.SourceCluster(clusterName), tag.KafkaConsumerName(consumerName))
 	historyRereplicator := xdc.NewHistoryRereplicator(

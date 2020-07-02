@@ -117,13 +117,7 @@ func newProcessingQueue(
 	if stateImpl, ok := state.(*processingQueueStateImpl); ok {
 		queue.state = stateImpl
 	} else {
-		queue.state = newProcessingQueueState(
-			state.Level(),
-			state.AckLevel(),
-			state.ReadLevel(),
-			state.MaxLevel(),
-			state.DomainFilter(),
-		)
+		queue.state = copyQueueState(state)
 	}
 
 	return queue
@@ -221,10 +215,11 @@ func (q *processingQueueImpl) Merge(
 		))
 	}
 
+	overlappingQueueAckLevel := maxTaskKey(q1.state.ackLevel, q2.state.ackLevel)
 	newQueueStates = append(newQueueStates, newProcessingQueueState(
 		q1.state.level,
-		maxTaskKey(q1.state.ackLevel, q2.state.ackLevel),
-		minTaskKey(q1.state.readLevel, q2.state.readLevel),
+		overlappingQueueAckLevel,
+		maxTaskKey(minTaskKey(q1.state.readLevel, q2.state.readLevel), overlappingQueueAckLevel),
 		minTaskKey(q1.state.maxLevel, q2.state.maxLevel),
 		q1.state.domainFilter.Merge(q2.state.domainFilter),
 	))
@@ -234,6 +229,7 @@ func (q *processingQueueImpl) Merge(
 
 func (q *processingQueueImpl) AddTasks(
 	tasks map[task.Key]task.Task,
+	newReadLevel task.Key,
 ) {
 	for key, task := range tasks {
 		if _, loaded := q.outstandingTasks[key]; loaded {
@@ -251,10 +247,9 @@ func (q *processingQueueImpl) AddTasks(
 		}
 
 		q.outstandingTasks[key] = task
-		if q.state.readLevel.Less(key) {
-			q.state.readLevel = key
-		}
 	}
+
+	q.state.readLevel = newReadLevel
 }
 
 func (q *processingQueueImpl) UpdateAckLevel() {
@@ -274,6 +269,14 @@ func (q *processingQueueImpl) UpdateAckLevel() {
 
 		q.state.ackLevel = key
 		delete(q.outstandingTasks, key)
+	}
+
+	if len(q.outstandingTasks) == 0 {
+		q.state.ackLevel = q.state.readLevel
+	}
+
+	if timerKey, ok := q.state.ackLevel.(timerTaskKey); ok {
+		q.state.ackLevel = newTimerTaskKey(timerKey.visibilityTimestamp, 0)
 	}
 }
 
@@ -363,4 +366,16 @@ func maxTaskKey(
 		return key2
 	}
 	return key1
+}
+
+func copyQueueState(
+	state ProcessingQueueState,
+) *processingQueueStateImpl {
+	return newProcessingQueueState(
+		state.Level(),
+		state.AckLevel(),
+		state.ReadLevel(),
+		state.MaxLevel(),
+		state.DomainFilter(),
+	)
 }

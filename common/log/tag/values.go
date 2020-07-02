@@ -113,6 +113,7 @@ var (
 	ComponentReplicator               = component("replicator")
 	ComponentReplicationTaskProcessor = component("replication-task-processor")
 	ComponentHistoryReplicator        = component("history-replicator")
+	ComponentHistoryResender          = component("history-resender")
 	ComponentIndexer                  = component("indexer")
 	ComponentIndexerProcessor         = component("indexer-processor")
 	ComponentIndexerESProcessor       = component("indexer-es-processor")
@@ -121,6 +122,8 @@ var (
 	ComponentBatcher                  = component("batcher")
 	ComponentWorker                   = component("worker")
 	ComponentServiceResolver          = component("service-resolver")
+	ComponentFailoverCoordinator      = component("failover-coordinator")
+	ComponentFailoverMarkerNotifier   = component("failover-marker-notifier")
 )
 
 // Pre-defined values for TagSysLifecycle

@@ -28,7 +28,6 @@ import (
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common/cache"
 	"github.com/uber/cadence/common/clock"
-	"github.com/uber/cadence/common/collection"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
@@ -47,6 +46,8 @@ var (
 	ErrTaskDiscarded = errors.New("passive task pending for too long")
 	// ErrTaskRetry is the error indicating that the timer / transfer task should be retried.
 	ErrTaskRetry = errors.New("passive task should retry due to condition in mutable state is not met")
+	// ErrTaskRedispatch is the error indicating that the task should be re-dispatch
+	ErrTaskRedispatch = errors.New("redispatch the task while the domain is pending-acitve")
 )
 
 type (
@@ -75,8 +76,9 @@ type (
 		taskExecutor  Executor
 		maxRetryCount dynamicconfig.IntPropertyFn
 
-		// TODO: following two fields should be removed after new task lifecycle is implemented
+		// TODO: following three fields should be removed after new task lifecycle is implemented
 		taskFilter        Filter
+		queueType         QueueType
 		shouldProcessTask bool
 	}
 
@@ -86,15 +88,15 @@ type (
 	timerTask struct {
 		*taskBase
 
-		ackMgr          TimerQueueAckMgr
-		redispatchQueue collection.Queue
+		ackMgr       TimerQueueAckMgr
+		redispatchFn func(task Task)
 	}
 
 	transferTask struct {
 		*taskBase
 
-		ackMgr          QueueAckMgr
-		redispatchQueue collection.Queue
+		ackMgr       QueueAckMgr
+		redispatchFn func(task Task)
 	}
 )
 
@@ -102,11 +104,11 @@ type (
 func NewTimerTask(
 	shard shard.Context,
 	taskInfo Info,
-	scope metrics.Scope,
+	queueType QueueType,
 	logger log.Logger,
 	taskFilter Filter,
 	taskExecutor Executor,
-	redispatchQueue collection.Queue,
+	redispatchFn func(task Task),
 	timeSource clock.TimeSource,
 	maxRetryCount dynamicconfig.IntPropertyFn,
 	ackMgr TimerQueueAckMgr,
@@ -115,15 +117,18 @@ func NewTimerTask(
 		taskBase: newQueueTaskBase(
 			shard,
 			taskInfo,
-			scope,
+			queueType,
+			shard.GetMetricsClient().Scope(
+				GetTimerTaskMetricScope(taskInfo.GetTaskType(), queueType == QueueTypeActiveTimer),
+			),
 			logger,
 			taskFilter,
 			taskExecutor,
 			timeSource,
 			maxRetryCount,
 		),
-		ackMgr:          ackMgr,
-		redispatchQueue: redispatchQueue,
+		ackMgr:       ackMgr,
+		redispatchFn: redispatchFn,
 	}
 }
 
@@ -131,11 +136,11 @@ func NewTimerTask(
 func NewTransferTask(
 	shard shard.Context,
 	taskInfo Info,
-	scope metrics.Scope,
+	queueType QueueType,
 	logger log.Logger,
 	taskFilter Filter,
 	taskExecutor Executor,
-	redispatchQueue collection.Queue,
+	redispatchFn func(task Task),
 	timeSource clock.TimeSource,
 	maxRetryCount dynamicconfig.IntPropertyFn,
 	ackMgr QueueAckMgr,
@@ -144,21 +149,25 @@ func NewTransferTask(
 		taskBase: newQueueTaskBase(
 			shard,
 			taskInfo,
-			scope,
+			queueType,
+			shard.GetMetricsClient().Scope(
+				GetTransferTaskMetricsScope(taskInfo.GetTaskType(), queueType == QueueTypeActiveTransfer),
+			),
 			logger,
 			taskFilter,
 			taskExecutor,
 			timeSource,
 			maxRetryCount,
 		),
-		ackMgr:          ackMgr,
-		redispatchQueue: redispatchQueue,
+		ackMgr:       ackMgr,
+		redispatchFn: redispatchFn,
 	}
 }
 
 func newQueueTaskBase(
 	shard shard.Context,
 	queueTaskInfo Info,
+	queueType QueueType,
 	scope metrics.Scope,
 	logger log.Logger,
 	taskFilter Filter,
@@ -170,6 +179,7 @@ func newQueueTaskBase(
 		Info:          queueTaskInfo,
 		shard:         shard,
 		state:         ctask.TaskStatePending,
+		queueType:     queueType,
 		scope:         scope,
 		logger:        logger,
 		attempt:       0,
@@ -188,7 +198,10 @@ func (t *timerTask) Ack() {
 	if !ok {
 		return
 	}
-	t.ackMgr.CompleteTimerTask(timerTask)
+
+	if t.ackMgr != nil {
+		t.ackMgr.CompleteTimerTask(timerTask)
+	}
 }
 
 func (t *timerTask) Nack() {
@@ -196,17 +209,15 @@ func (t *timerTask) Nack() {
 
 	// don't move redispatchQueue to taskBase as we need to
 	// redispatch timeQueueTask, not taskBase
-	t.redispatchQueue.Add(t)
-}
-
-func (t *timerTask) GetQueueType() QueueType {
-	return QueueTypeTimer
+	t.redispatchFn(t)
 }
 
 func (t *transferTask) Ack() {
 	t.taskBase.Ack()
 
-	t.ackMgr.CompleteQueueTask(t.GetTaskID())
+	if t.ackMgr != nil {
+		t.ackMgr.CompleteQueueTask(t.GetTaskID())
+	}
 }
 
 func (t *transferTask) Nack() {
@@ -214,11 +225,7 @@ func (t *transferTask) Nack() {
 
 	// don't move redispatchQueue to taskBase as we need to
 	// redispatch transferTask, not taskBase
-	t.redispatchQueue.Add(t)
-}
-
-func (t *transferTask) GetQueueType() QueueType {
-	return QueueTypeTransfer
+	t.redispatchFn(t)
 }
 
 func (t *taskBase) Execute() error {
@@ -250,6 +257,9 @@ func (t *taskBase) HandleErr(
 ) (retErr error) {
 	defer func() {
 		if retErr != nil {
+			t.Lock()
+			defer t.Unlock()
+
 			t.attempt++
 			if t.attempt > t.maxRetryCount() {
 				t.logger.Error("Critical error processing task, retrying.",
@@ -303,6 +313,10 @@ func (t *taskBase) HandleErr(
 func (t *taskBase) RetryErr(
 	err error,
 ) bool {
+	if err == ErrTaskRedispatch {
+		return false
+	}
+
 	return true
 }
 
@@ -350,4 +364,15 @@ func (t *taskBase) SetPriority(
 
 func (t *taskBase) GetShard() shard.Context {
 	return t.shard
+}
+
+func (t *taskBase) GetAttempt() int {
+	t.Lock()
+	defer t.Unlock()
+
+	return t.attempt
+}
+
+func (t *taskBase) GetQueueType() QueueType {
+	return t.queueType
 }

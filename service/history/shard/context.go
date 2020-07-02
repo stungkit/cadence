@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/uber/cadence/.gen/go/replicator"
 	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/backoff"
@@ -38,10 +39,10 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
-	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
 	"github.com/uber/cadence/service/history/events"
+	"github.com/uber/cadence/service/history/resource"
 )
 
 type (
@@ -109,6 +110,10 @@ type (
 		ConflictResolveWorkflowExecution(request *persistence.ConflictResolveWorkflowExecutionRequest) error
 		ResetWorkflowExecution(request *persistence.ResetWorkflowExecutionRequest) error
 		AppendHistoryV2Events(request *persistence.AppendHistoryNodesRequest, domainID string, execution shared.WorkflowExecution) (int, error)
+
+		ReplicateFailoverMarkers(makers []*persistence.FailoverMarkerTask) error
+		AddingPendingFailoverMarker(*replicator.FailoverMarkerAttributes) error
+		ValidateAndUpdateFailoverMarkers() ([]*replicator.FailoverMarkerAttributes, error)
 	}
 
 	contextImpl struct {
@@ -133,6 +138,7 @@ type (
 		maxTransferSequenceNumber int64
 		transferMaxReadLevel      int64
 		timerMaxReadLevelMap      map[string]time.Time // cluster -> timerMaxReadLevel
+		pendingFailoverMarkers    []*replicator.FailoverMarkerAttributes
 
 		// exist only in memory
 		remoteClusterCurrentTime map[string]time.Time
@@ -490,6 +496,7 @@ Create_Loop:
 			switch err.(type) {
 			case *shared.WorkflowExecutionAlreadyStartedError,
 				*persistence.WorkflowExecutionAlreadyStartedError,
+				*persistence.CurrentWorkflowConditionFailedError,
 				*shared.ServiceBusyError,
 				*persistence.TimeoutError,
 				*shared.LimitExceededError:
@@ -863,6 +870,10 @@ func (s *contextImpl) PreviousShardOwnerWasDifferent() bool {
 }
 
 func (s *contextImpl) GetEventsCache() events.Cache {
+	// the shard needs to be restarted to release the shard cache once global mode is on.
+	if s.config.EventsCacheGlobalEnable() {
+		return s.GetEventCache()
+	}
 	return s.eventsCache
 }
 
@@ -1166,6 +1177,129 @@ func (s *contextImpl) GetLastUpdatedTime() time.Time {
 	return s.lastUpdated
 }
 
+func (s *contextImpl) ReplicateFailoverMarkers(
+	markers []*persistence.FailoverMarkerTask,
+) error {
+
+	tasks := make([]persistence.Task, 0, len(markers))
+	for _, marker := range markers {
+		tasks = append(tasks, marker)
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	transferMaxReadLevel := int64(0)
+	if err := s.allocateTransferIDsLocked(
+		tasks,
+		&transferMaxReadLevel,
+	); err != nil {
+		return err
+	}
+	defer s.updateMaxReadLevelLocked(transferMaxReadLevel)
+
+	var err error
+	for attempt := int32(0); attempt < conditionalRetryCount; attempt++ {
+		err = s.executionManager.CreateFailoverMarkerTasks(
+			&persistence.CreateFailoverMarkersRequest{
+				RangeID: s.getRangeID(),
+				Markers: markers,
+			},
+		)
+		switch err.(type) {
+		case nil:
+			break
+		case *persistence.ShardOwnershipLostError:
+			// do not retry on ShardOwnershipLostError
+			s.closeShard()
+			break
+		default:
+			s.logger.Error(
+				"Failed to insert the failover marker into replication queue.",
+				tag.Error(err),
+				tag.Attempt(attempt),
+			)
+		}
+	}
+	return err
+}
+
+func (s *contextImpl) AddingPendingFailoverMarker(
+	marker *replicator.FailoverMarkerAttributes,
+) error {
+
+	domainEntry, err := s.GetDomainCache().GetDomainByID(marker.GetDomainID())
+	if err != nil {
+		return err
+	}
+	// domain is active, the marker is expired
+	if domainEntry.IsDomainActive() || domainEntry.GetFailoverVersion() > marker.GetFailoverVersion() {
+		return nil
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	s.pendingFailoverMarkers = append(s.pendingFailoverMarkers, marker)
+	if err := s.updateFailoverMarkersInShardInfoLocked(); err != nil {
+		return err
+	}
+	return s.updateShardInfoLocked()
+}
+
+func (s *contextImpl) ValidateAndUpdateFailoverMarkers() ([]*replicator.FailoverMarkerAttributes, error) {
+
+	completedFailoverMarkers := make(map[*replicator.FailoverMarkerAttributes]struct{})
+	s.RLock()
+	for _, marker := range s.pendingFailoverMarkers {
+		domainEntry, err := s.GetDomainCache().GetDomainByID(marker.GetDomainID())
+		if err != nil {
+			s.RUnlock()
+			return nil, err
+		}
+		if domainEntry.IsDomainActive() || domainEntry.GetFailoverVersion() > marker.GetFailoverVersion() {
+			completedFailoverMarkers[marker] = struct{}{}
+		}
+	}
+
+	if len(completedFailoverMarkers) == 0 {
+		return s.pendingFailoverMarkers, nil
+	}
+	s.RUnlock()
+
+	// clean up all pending failover tasks
+	s.Lock()
+	defer s.Unlock()
+
+	for idx, marker := range s.pendingFailoverMarkers {
+		if _, ok := completedFailoverMarkers[marker]; ok {
+			s.pendingFailoverMarkers[idx] = s.pendingFailoverMarkers[len(s.pendingFailoverMarkers)-1]
+			s.pendingFailoverMarkers[len(s.pendingFailoverMarkers)-1] = nil
+			s.pendingFailoverMarkers = s.pendingFailoverMarkers[:len(s.pendingFailoverMarkers)-1]
+		}
+	}
+	if err := s.updateFailoverMarkersInShardInfoLocked(); err != nil {
+		return nil, err
+	}
+	if err := s.updateShardInfoLocked(); err != nil {
+		return nil, err
+	}
+
+	return s.pendingFailoverMarkers, nil
+}
+
+func (s *contextImpl) updateFailoverMarkersInShardInfoLocked() error {
+
+	serializer := s.GetPayloadSerializer()
+	data, err := serializer.SerializePendingFailoverMarkers(s.pendingFailoverMarkers, common.EncodingTypeThriftRW)
+	if err != nil {
+		return err
+	}
+
+	s.shardInfo.PendingFailoverMarkers = data
+	return nil
+}
+
 func acquireShard(
 	shardItem *historyShardsItem,
 	closeCallback func(int, *historyShardsItem),
@@ -1183,7 +1317,6 @@ func acquireShard(
 		}
 		_, ok := err.(*persistence.ShardAlreadyExistError)
 		return ok
-
 	}
 
 	getShard := func() error {
@@ -1253,10 +1386,13 @@ func acquireShard(
 		config:                         shardItem.config,
 		remoteClusterCurrentTime:       remoteClusterCurrentTime,
 		timerMaxReadLevelMap:           timerMaxReadLevelMap, // use ack to init read level
+		pendingFailoverMarkers:         []*replicator.FailoverMarkerAttributes{},
 		logger:                         shardItem.logger,
 		throttledLogger:                shardItem.throttledLogger,
 		previousShardOwnerWasDifferent: ownershipChanged,
 	}
+
+	// TODO remove once migrated to global event cache
 	context.eventsCache = events.NewCache(
 		context.shardID,
 		context.Resource.GetHistoryManager(),
@@ -1264,6 +1400,8 @@ func acquireShard(
 		context.logger,
 		context.Resource.GetMetricsClient(),
 	)
+
+	context.logger.Debug(fmt.Sprintf("Global event cache mode: %v", context.config.EventsCacheGlobalEnable()))
 
 	err1 := context.renewRangeLocked(true)
 	if err1 != nil {
@@ -1294,6 +1432,10 @@ func copyShardInfo(shardInfo *persistence.ShardInfo) *persistence.ShardInfo {
 	for k, v := range shardInfo.ClusterReplicationLevel {
 		clusterReplicationLevel[k] = v
 	}
+	replicationDLQAckLevel := make(map[string]int64)
+	for k, v := range shardInfo.ReplicationDLQAckLevel {
+		replicationDLQAckLevel[k] = v
+	}
 	shardInfoCopy := &persistence.ShardInfo{
 		ShardID:                   shardInfo.ShardID,
 		Owner:                     shardInfo.Owner,
@@ -1308,6 +1450,8 @@ func copyShardInfo(shardInfo *persistence.ShardInfo) *persistence.ShardInfo {
 		ClusterTimerAckLevel:      clusterTimerAckLevel,
 		DomainNotificationVersion: shardInfo.DomainNotificationVersion,
 		ClusterReplicationLevel:   clusterReplicationLevel,
+		ReplicationDLQAckLevel:    replicationDLQAckLevel,
+		PendingFailoverMarkers:    shardInfo.PendingFailoverMarkers,
 		UpdatedAt:                 shardInfo.UpdatedAt,
 	}
 

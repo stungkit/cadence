@@ -54,6 +54,10 @@ import (
 
 var _ adminserviceserver.Interface = (*AdminHandler)(nil)
 
+var (
+	errMaxMessageIDNotSet = &gen.BadRequestError{Message: "Max messageID is not set."}
+)
+
 type (
 	// AdminHandler - Thrift handler interface for admin service
 	AdminHandler struct {
@@ -63,6 +67,7 @@ type (
 		params                *service.BootstrapParams
 		config                *Config
 		domainDLQHandler      domain.DLQMessageHandler
+		domainFailoverWatcher domain.FailoverWatcher
 		eventSerializder      persistence.PayloadSerializer
 	}
 
@@ -105,6 +110,15 @@ func NewAdminHandler(
 			resource.GetDomainReplicationQueue(),
 			resource.GetLogger(),
 		),
+		domainFailoverWatcher: domain.NewFailoverWatcher(
+			resource.GetDomainCache(),
+			resource.GetMetadataManager(),
+			resource.GetTimeSource(),
+			config.DomainFailoverRefreshInterval,
+			config.DomainFailoverRefreshTimerJitterCoefficient,
+			resource.GetMetricsClient(),
+			resource.GetLogger(),
+		),
 		eventSerializder: persistence.NewPayloadSerializer(),
 	}
 }
@@ -121,12 +135,17 @@ func (adh *AdminHandler) Start() {
 		// If the queue does not start, we can still call stop()
 		adh.Resource.GetDomainReplicationQueue().Start()
 	}
+
+	if adh.config.EnableGracefulFailover() {
+		adh.domainFailoverWatcher.Start()
+	}
 }
 
 // Stop stops the handler
 func (adh *AdminHandler) Stop() {
 	// Calling stop if the queue does not start is ok
 	adh.Resource.GetDomainReplicationQueue().Stop()
+	adh.domainFailoverWatcher.Stop()
 }
 
 // AddSearchAttribute add search attribute to whitelist
@@ -668,7 +687,7 @@ func (adh *AdminHandler) GetReplicationMessages(
 		return nil, adh.error(errClusterNameNotSet, scope)
 	}
 
-	resp, err = adh.GetHistoryClient().GetReplicationMessages(ctx, request)
+	resp, err = adh.GetHistoryRawClient().GetReplicationMessages(ctx, request)
 	if err != nil {
 		return nil, adh.error(err, scope)
 	}
@@ -878,7 +897,7 @@ func (adh *AdminHandler) PurgeDLQMessages(
 	}
 
 	if !request.IsSetInclusiveEndMessageID() {
-		request.InclusiveEndMessageID = common.Int64Ptr(common.EndMessageID)
+		return adh.error(errMaxMessageIDNotSet, scope)
 	}
 
 	var op func() error
@@ -926,7 +945,7 @@ func (adh *AdminHandler) MergeDLQMessages(
 	}
 
 	if !request.IsSetInclusiveEndMessageID() {
-		request.InclusiveEndMessageID = common.Int64Ptr(common.EndMessageID)
+		return nil, adh.error(errMaxMessageIDNotSet, scope)
 	}
 
 	var token []byte

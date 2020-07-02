@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 // 
-// Copyright (c) 2020 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies Inc.
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -326,6 +326,37 @@ func (mr *_MockClientRecorder) MergeDLQMessages(
 ) *gomock.Call {
 	args := append([]interface{}{ctx, _Request}, opts...)
 	return mr.mock.ctrl.RecordCall(mr.mock, "MergeDLQMessages", args...)
+}
+
+// NotifyFailoverMarkers responds to a NotifyFailoverMarkers call based on the mock expectations. This
+// call will fail if the mock does not expect this call. Use EXPECT to expect
+// a call to this function.
+//
+// 	client.EXPECT().NotifyFailoverMarkers(gomock.Any(), ...).Return(...)
+// 	... := client.NotifyFailoverMarkers(...)
+func (m *MockClient) NotifyFailoverMarkers(
+	ctx context.Context,
+	_Request *history.NotifyFailoverMarkersRequest,
+	opts ...yarpc.CallOption,
+) (err error) {
+
+	args := []interface{}{ctx, _Request}
+	for _, o := range opts {
+		args = append(args, o)
+	}
+	i := 0
+	ret := m.ctrl.Call(m, "NotifyFailoverMarkers", args...)
+	err, _ = ret[i].(error)
+	return
+}
+
+func (mr *_MockClientRecorder) NotifyFailoverMarkers(
+	ctx interface{},
+	_Request interface{},
+	opts ...interface{},
+) *gomock.Call {
+	args := append([]interface{}{ctx, _Request}, opts...)
+	return mr.mock.ctrl.RecordCall(mr.mock, "NotifyFailoverMarkers", args...)
 }
 
 // PollMutableState responds to a PollMutableState call based on the mock expectations. This

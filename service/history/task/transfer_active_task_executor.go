@@ -98,6 +98,8 @@ func NewTransferActiveTaskExecutor(
 			shard.GetService().GetSDKClient(),
 			config.NumParentClosePolicySystemWorkflows(),
 		),
+		workflowResetor:  workflowResetor,
+		workflowResetter: workflowResetter,
 	}
 }
 
@@ -399,7 +401,7 @@ func (t *transferActiveTaskExecutor) processCancelExecution(
 
 		// Check to see if the error is non-transient, in which case add RequestCancelFailed
 		// event and complete transfer task by setting the err = nil
-		if !common.IsServiceNonRetryableError(err) {
+		if common.IsServiceTransientError(err) {
 			// for retryable error just return
 			return err
 		}
@@ -489,7 +491,7 @@ func (t *transferActiveTaskExecutor) processSignalExecution(
 
 		// Check to see if the error is non-transient, in which case add SignalFailed
 		// event and complete transfer task by setting the err = nil
-		if !common.IsServiceNonRetryableError(err) {
+		if common.IsServiceTransientError(err) {
 			// for retryable error just return
 			return err
 		}

@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -44,12 +44,12 @@ import (
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/quotas"
-	"github.com/uber/cadence/common/resource"
-	t "github.com/uber/cadence/common/task"
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/engine"
 	"github.com/uber/cadence/service/history/events"
+	"github.com/uber/cadence/service/history/failover"
 	"github.com/uber/cadence/service/history/replication"
+	"github.com/uber/cadence/service/history/resource"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
@@ -69,6 +69,7 @@ type (
 		rateLimiter             quotas.Limiter
 		replicationTaskFetchers replication.TaskFetchers
 		queueTaskProcessor      task.Processor
+		failoverCoordinator     failover.Coordinator
 	}
 )
 
@@ -146,30 +147,9 @@ func (h *Handler) Start() {
 			h.config,
 		)
 
-		schedulerType := t.SchedulerType(h.config.TaskSchedulerType())
-		processorOptions := &task.ProcessorOptions{
-			SchedulerType: schedulerType,
-		}
-		switch schedulerType {
-		case t.SchedulerTypeFIFO:
-			processorOptions.FifoSchedulerOptions = &t.FIFOTaskSchedulerOptions{
-				QueueSize:   h.config.TaskSchedulerQueueSize(),
-				WorkerCount: h.config.TaskSchedulerWorkerCount(),
-				RetryPolicy: common.CreatePersistanceRetryPolicy(),
-			}
-		case t.SchedulerTypeWRR:
-			processorOptions.WRRSchedulerOptions = &t.WeightedRoundRobinTaskSchedulerOptions{
-				Weights:     h.config.TaskSchedulerRoundRobinWeights,
-				QueueSize:   h.config.TaskSchedulerQueueSize(),
-				WorkerCount: h.config.TaskSchedulerWorkerCount(),
-				RetryPolicy: common.CreatePersistanceRetryPolicy(),
-			}
-		default:
-			h.GetLogger().Fatal("Unknown task scheduler type", tag.Value(schedulerType))
-		}
 		h.queueTaskProcessor, err = task.NewProcessor(
 			taskPriorityAssigner,
-			processorOptions,
+			h.config,
 			h.GetLogger(),
 			h.GetMetricsClient(),
 		)
@@ -187,6 +167,19 @@ func (h *Handler) Start() {
 	h.historyEventNotifier = events.NewNotifier(h.GetTimeSource(), h.GetMetricsClient(), h.config.GetShardID)
 	// events notifier must starts before controller
 	h.historyEventNotifier.Start()
+
+	h.failoverCoordinator = failover.NewCoordinator(
+		h.GetMetadataManager(),
+		h.GetHistoryClient(),
+		h.GetTimeSource(),
+		h.config,
+		h.GetMetricsClient(),
+		h.GetLogger(),
+	)
+	if h.config.EnableGracefulFailover() {
+		h.failoverCoordinator.Start()
+	}
+
 	h.controller.Start()
 
 	h.startWG.Done()
@@ -201,6 +194,7 @@ func (h *Handler) Stop() {
 	}
 	h.controller.Stop()
 	h.historyEventNotifier.Stop()
+	h.failoverCoordinator.Stop()
 }
 
 // PrepareToStop starts graceful traffic drain in preparation for shutdown
@@ -228,6 +222,7 @@ func (h *Handler) CreateEngine(
 		h.replicationTaskFetchers,
 		h.GetMatchingRawClient(),
 		h.queueTaskProcessor,
+		h.failoverCoordinator,
 	)
 }
 
@@ -1706,7 +1701,7 @@ func (h *Handler) GetDLQReplicationMessages(
 	wg.Wait()
 	close(tasksChan)
 
-	replicationTasks := make([]*r.ReplicationTask, len(tasksChan))
+	replicationTasks := make([]*r.ReplicationTask, 0, len(tasksChan))
 	for task := range tasksChan {
 		replicationTasks = append(replicationTasks, task)
 	}
@@ -1874,6 +1869,26 @@ func (h *Handler) RefreshWorkflowTasks(
 		return h.error(err, scope, domainID, workflowID)
 	}
 
+	return nil
+}
+
+// NotifyFailoverMarkers sends the failover markers to failover coordinator.
+// The coordinator decides when the failover finishes based on received failover marker.
+func (h *Handler) NotifyFailoverMarkers(
+	ctx context.Context,
+	request *hist.NotifyFailoverMarkersRequest,
+) (retError error) {
+
+	scope := metrics.HistoryNotifyFailoverMarkersScope
+	h.GetMetricsClient().IncCounter(scope, metrics.CadenceRequests)
+	sw := h.GetMetricsClient().StartTimer(scope, metrics.CadenceLatency)
+	defer sw.Stop()
+
+	for _, token := range request.GetFailoverMarkerTokens() {
+		marker := token.GetFailoverMarker()
+		h.GetLogger().Debug("Handling failover maker", tag.WorkflowDomainID(marker.GetDomainID()))
+		h.failoverCoordinator.ReceiveFailoverMarkers(token.GetShardIDs(), token.GetFailoverMarker())
+	}
 	return nil
 }
 

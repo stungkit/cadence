@@ -1,4 +1,4 @@
-// Copyright (c) 2017 Uber Technologies, Inc.
+// Copyright (c) 2017-2020 Uber Technologies, Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,9 @@ package frontend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	h "github.com/uber/cadence/.gen/go/history"
 	m "github.com/uber/cadence/.gen/go/matching"
 	gen "github.com/uber/cadence/.gen/go/shared"
+	"github.com/uber/cadence/client/frontend"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/backoff"
@@ -366,6 +369,15 @@ func (wh *WorkflowHandler) UpdateDomain(
 	// don't require permission for failover request
 	if !isFailoverRequest(updateRequest) {
 		if err := checkPermission(wh.config, updateRequest.SecurityToken); err != nil {
+			return nil, err
+		}
+	}
+
+	if isGraceFailoverRequest(updateRequest) {
+		if err := wh.checkOngoingFailover(
+			ctx,
+			updateRequest.Name,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -2268,16 +2280,10 @@ func (wh *WorkflowHandler) SignalWithStartWorkflowExecution(
 		return nil, wh.error(err, scope)
 	}
 
-	op := func() error {
-		var err error
-		resp, err = wh.GetHistoryClient().SignalWithStartWorkflowExecution(ctx, &h.SignalWithStartWorkflowExecutionRequest{
-			DomainUUID:             common.StringPtr(domainID),
-			SignalWithStartRequest: signalWithStartRequest,
-		})
-		return err
-	}
-
-	err = backoff.Retry(op, frontendServiceRetryPolicy, common.IsServiceTransientError)
+	resp, err = wh.GetHistoryClient().SignalWithStartWorkflowExecution(ctx, &h.SignalWithStartWorkflowExecutionRequest{
+		DomainUUID:             common.StringPtr(domainID),
+		SignalWithStartRequest: signalWithStartRequest,
+	})
 	if err != nil {
 		return nil, wh.error(err, scope)
 	}
@@ -3198,17 +3204,10 @@ func (wh *WorkflowHandler) DescribeTaskList(
 		return nil, err
 	}
 
-	var response *gen.DescribeTaskListResponse
-	op := func() error {
-		var err error
-		response, err = wh.GetMatchingClient().DescribeTaskList(ctx, &m.DescribeTaskListRequest{
-			DomainUUID:  common.StringPtr(domainID),
-			DescRequest: request,
-		})
-		return err
-	}
-
-	err = backoff.Retry(op, frontendServiceRetryPolicy, common.IsServiceTransientError)
+	response, err := wh.GetMatchingClient().DescribeTaskList(ctx, &m.DescribeTaskListRequest{
+		DomainUUID:  common.StringPtr(domainID),
+		DescRequest: request,
+	})
 	if err != nil {
 		return nil, wh.error(err, scope)
 	}
@@ -3217,7 +3216,10 @@ func (wh *WorkflowHandler) DescribeTaskList(
 }
 
 // ListTaskListPartitions returns all the partition and host for a taskList
-func (wh *WorkflowHandler) ListTaskListPartitions(ctx context.Context, request *gen.ListTaskListPartitionsRequest) (resp *gen.ListTaskListPartitionsResponse, retError error) {
+func (wh *WorkflowHandler) ListTaskListPartitions(
+	ctx context.Context,
+	request *gen.ListTaskListPartitionsRequest,
+) (resp *gen.ListTaskListPartitionsResponse, retError error) {
 	defer log.CapturePanic(wh.GetLogger(), &retError)
 
 	scope, sw := wh.startRequestProfileWithDomain(metrics.FrontendListTaskListPartitionsScope, request)
@@ -3479,7 +3481,10 @@ func (wh *WorkflowHandler) error(err error, scope metrics.Scope, tagsForErrorLog
 			return err
 		}
 	}
-
+	if errors.Is(err, context.DeadlineExceeded) {
+		scope.IncCounter(metrics.CadenceErrContextTimeoutCounter)
+		return err
+	}
 	wh.GetLogger().WithTags(tagsForErrorLog...).Error("Uncategorized error",
 		tag.Error(err))
 	scope.IncCounter(metrics.CadenceFailures)
@@ -3704,6 +3709,68 @@ func createServiceBusyError() *gen.ServiceBusyError {
 
 func isFailoverRequest(updateRequest *gen.UpdateDomainRequest) bool {
 	return updateRequest.ReplicationConfiguration != nil && updateRequest.ReplicationConfiguration.ActiveClusterName != nil
+}
+
+func isGraceFailoverRequest(updateRequest *gen.UpdateDomainRequest) bool {
+	return updateRequest.IsSetFailoverTimeoutInSeconds()
+}
+
+func (wh *WorkflowHandler) checkOngoingFailover(
+	ctx context.Context,
+	domainName *string,
+) error {
+
+	clusterMetadata := wh.GetClusterMetadata()
+	respChan := make(chan *gen.DescribeDomainResponse, len(clusterMetadata.GetAllClusterInfo()))
+	wg := &sync.WaitGroup{}
+
+	describeDomain := func(
+		ctx context.Context,
+		client frontend.Client,
+		domainName *string,
+	) {
+		defer wg.Done()
+		resp, _ := client.DescribeDomain(
+			ctx,
+			&gen.DescribeDomainRequest{
+				Name: domainName,
+			},
+		)
+		respChan <- resp
+	}
+
+	for clusterName, cluster := range clusterMetadata.GetAllClusterInfo() {
+		if !cluster.Enabled {
+			continue
+		}
+		frontendClient := wh.GetRemoteFrontendClient(clusterName)
+		wg.Add(1)
+		go describeDomain(
+			ctx,
+			frontendClient,
+			domainName,
+		)
+	}
+	wg.Wait()
+	close(respChan)
+
+	var failoverVersion *int64
+	for resp := range respChan {
+		if resp == nil {
+			return &gen.InternalServiceError{
+				Message: "Failed to verify failover version from all clusters",
+			}
+		}
+		if failoverVersion == nil {
+			failoverVersion = resp.FailoverVersion
+		}
+		if failoverVersion != resp.FailoverVersion {
+			return &gen.BadRequestError{
+				Message: "Concurrent failover is not allow.",
+			}
+		}
+	}
+	return nil
 }
 
 func (wh *WorkflowHandler) historyArchived(ctx context.Context, request *gen.GetWorkflowExecutionHistoryRequest, domainID string) bool {

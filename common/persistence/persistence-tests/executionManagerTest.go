@@ -5115,6 +5115,7 @@ func (s *ExecutionManagerSuite) TestCreateGetShardBackfill() {
 		TransferAckLevel:        currentClusterTransferAck,
 		TimerAckLevel:           currentClusterTimerAck,
 		ClusterReplicationLevel: map[string]int64{},
+		ReplicationDLQAckLevel:  map[string]int64{},
 	}
 	createRequest := &p.CreateShardRequest{
 		ShardInfo: shardInfo,
@@ -5170,6 +5171,7 @@ func (s *ExecutionManagerSuite) TestCreateGetUpdateGetShard() {
 		},
 		DomainNotificationVersion: domainNotificationVersion,
 		ClusterReplicationLevel:   map[string]int64{},
+		ReplicationDLQAckLevel:    map[string]int64{},
 	}
 	createRequest := &p.CreateShardRequest{
 		ShardInfo: shardInfo,
@@ -5212,6 +5214,7 @@ func (s *ExecutionManagerSuite) TestCreateGetUpdateGetShard() {
 		},
 		DomainNotificationVersion: domainNotificationVersion,
 		ClusterReplicationLevel:   map[string]int64{cluster.TestAlternativeClusterName: 12345},
+		ReplicationDLQAckLevel:    map[string]int64{},
 	}
 	updateRequest := &p.UpdateShardRequest{
 		ShardInfo:       shardInfo,
@@ -5278,6 +5281,29 @@ func (s *ExecutionManagerSuite) TestReplicationDLQ() {
 	resp, err = s.GetReplicationTasksFromDLQ(sourceCluster, 0, 2, 2, nil)
 	s.NoError(err)
 	s.Len(resp.Tasks, 0)
+}
+
+// TestCreateFailoverMarkerTasks test
+func (s *ExecutionManagerSuite) TestCreateFailoverMarkerTasks() {
+	domainID := uuid.New()
+	markers := []*p.FailoverMarkerTask{
+		{
+			TaskID:              1,
+			VisibilityTimestamp: time.Now(),
+			DomainID:            domainID,
+			Version:             1,
+		},
+	}
+	err := s.CreateFailoverMarkers(markers)
+	s.NoError(err)
+
+	tasks, err := s.GetReplicationTasks(1, true)
+	s.NoError(err)
+	s.Equal(len(tasks), 1)
+	s.Equal(tasks[0].Version, int64(1))
+	s.Equal(tasks[0].TaskID, int64(1))
+	s.Equal(tasks[0].DomainID, domainID)
+	s.Equal(tasks[0].TaskType, p.ReplicationTaskTypeFailoverMarker)
 }
 
 func copyWorkflowExecutionInfo(sourceInfo *p.WorkflowExecutionInfo) *p.WorkflowExecutionInfo {

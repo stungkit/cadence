@@ -23,7 +23,6 @@ package history
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,10 +34,10 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
-	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/quotas"
 	"github.com/uber/cadence/common/service/dynamicconfig"
 	"github.com/uber/cadence/service/history/execution"
+	"github.com/uber/cadence/service/history/queue"
 	"github.com/uber/cadence/service/history/shard"
 	"github.com/uber/cadence/service/history/task"
 )
@@ -59,12 +58,10 @@ type (
 		MaxRedispatchQueueSize              dynamicconfig.IntPropertyFn
 		EnablePriorityTaskProcessor         dynamicconfig.BoolPropertyFn
 		MetricScope                         int
+		QueueType                           task.QueueType
 	}
 
-	queueTaskInitializer func(task.Info) task.Task
-
 	queueProcessorBase struct {
-		clusterName          string
 		shard                shard.Context
 		timeSource           clock.TimeSource
 		options              *QueueProcessorOptions
@@ -72,15 +69,17 @@ type (
 		logger               log.Logger
 		metricsScope         metrics.Scope
 		rateLimiter          quotas.Limiter // Read rate limiter
-		ackMgr               queueAckMgr
+		ackMgr               *queueAckMgrImpl
 		taskProcessor        *taskProcessor // TODO: deprecate task processor, in favor of queueTaskProcessor
 		queueTaskProcessor   task.Processor
 		redispatchQueue      collection.Queue
-		queueTaskInitializer queueTaskInitializer
+		queueTaskInitializer task.Initializer
 
 		lastPollTime time.Time
 
-		notifyCh   chan struct{}
+		notifyCh           chan struct{}
+		redispatchNotifyCh chan struct{}
+
 		status     int32
 		shutdownWG sync.WaitGroup
 		shutdownCh chan struct{}
@@ -99,16 +98,16 @@ func newQueueProcessorBase(
 	options *QueueProcessorOptions,
 	processor processor,
 	queueTaskProcessor task.Processor,
-	queueAckMgr queueAckMgr,
-	redispatchQueue collection.Queue,
+	queueAckMgr *queueAckMgrImpl,
 	executionCache *execution.Cache,
-	queueTaskInitializer queueTaskInitializer,
+	taskFilter task.Filter,
+	taskExecutor task.Executor,
 	logger log.Logger,
 	metricsScope metrics.Scope,
 ) *queueProcessorBase {
 
 	var taskProcessor *taskProcessor
-	if !options.EnablePriorityTaskProcessor() {
+	if queueTaskProcessor == nil || !options.EnablePriorityTaskProcessor() {
 		taskProcessorOptions := taskProcessorOptions{
 			queueSize:   options.BatchSize(),
 			workerCount: options.WorkerCount(),
@@ -117,27 +116,43 @@ func newQueueProcessorBase(
 	}
 
 	p := &queueProcessorBase{
-		clusterName: clusterName,
-		shard:       shard,
-		timeSource:  shard.GetTimeSource(),
-		options:     options,
-		processor:   processor,
+		shard:      shard,
+		timeSource: shard.GetTimeSource(),
+		options:    options,
+		processor:  processor,
 		rateLimiter: quotas.NewDynamicRateLimiter(
 			func() float64 {
 				return float64(options.MaxPollRPS())
 			},
 		),
-		status:               common.DaemonStatusInitialized,
-		notifyCh:             make(chan struct{}, 1),
-		shutdownCh:           make(chan struct{}),
-		logger:               logger,
-		metricsScope:         metricsScope,
-		ackMgr:               queueAckMgr,
-		lastPollTime:         time.Time{},
-		taskProcessor:        taskProcessor,
-		queueTaskProcessor:   queueTaskProcessor,
-		redispatchQueue:      redispatchQueue,
-		queueTaskInitializer: queueTaskInitializer,
+		status:             common.DaemonStatusInitialized,
+		redispatchNotifyCh: make(chan struct{}, 1),
+		notifyCh:           make(chan struct{}, 1),
+		shutdownCh:         make(chan struct{}),
+		logger:             logger,
+		metricsScope:       metricsScope,
+		ackMgr:             queueAckMgr,
+		lastPollTime:       time.Time{},
+		taskProcessor:      taskProcessor,
+		queueTaskProcessor: queueTaskProcessor,
+		redispatchQueue:    collection.NewConcurrentQueue(),
+	}
+
+	if options.QueueType != task.QueueTypeReplication {
+		p.queueTaskInitializer = func(taskInfo task.Info) task.Task {
+			return task.NewTransferTask(
+				shard,
+				taskInfo,
+				options.QueueType,
+				task.InitializeLoggerForTask(shard.GetShardID(), taskInfo, logger),
+				taskFilter,
+				taskExecutor,
+				p.redispatchSingleTask,
+				p.timeSource,
+				options.MaxRetryCount,
+				p.ackMgr,
+			)
+		}
 	}
 
 	return p
@@ -154,9 +169,15 @@ func (p *queueProcessorBase) Start() {
 	if p.taskProcessor != nil {
 		p.taskProcessor.start()
 	}
-	p.shutdownWG.Add(1)
 	p.notifyNewTask()
+
+	p.shutdownWG.Add(1)
 	go p.processorPump()
+
+	if p.isPriorityTaskProcessorEnabled() {
+		p.shutdownWG.Add(1)
+		go p.redispatchLoop()
+	}
 }
 
 func (p *queueProcessorBase) Stop() {
@@ -187,6 +208,18 @@ func (p *queueProcessorBase) notifyNewTask() {
 	}
 }
 
+func (p *queueProcessorBase) redispatchSingleTask(task task.Task) {
+	p.redispatchQueue.Add(task)
+	p.notifyRedispatch()
+}
+
+func (p *queueProcessorBase) notifyRedispatch() {
+	select {
+	case p.redispatchNotifyCh <- struct{}{}:
+	default:
+	}
+}
+
 func (p *queueProcessorBase) processorPump() {
 	defer p.shutdownWG.Done()
 
@@ -202,19 +235,13 @@ func (p *queueProcessorBase) processorPump() {
 	))
 	defer updateAckTimer.Stop()
 
-	redispatchTimer := time.NewTimer(backoff.JitDuration(
-		p.options.RedispatchInterval(),
-		p.options.RedispatchIntervalJitterCoefficient(),
-	))
-	defer redispatchTimer.Stop()
-
 processorPumpLoop:
 	for {
 		select {
 		case <-p.shutdownCh:
 			break processorPumpLoop
 		case <-p.ackMgr.getFinishedChan():
-			// use a separate gorouting since the caller hold the shutdownWG
+			// use a separate goroutine since the caller hold the shutdownWG
 			go p.Stop()
 		case <-p.notifyCh:
 			if !p.isPriorityTaskProcessorEnabled() || p.redispatchQueue.Len() <= p.options.MaxRedispatchQueueSize() {
@@ -244,16 +271,50 @@ processorPumpLoop:
 				go p.Stop()
 				break processorPumpLoop
 			}
-		case <-redispatchTimer.C:
-			redispatchTimer.Reset(backoff.JitDuration(
-				p.options.RedispatchInterval(),
-				p.options.RedispatchIntervalJitterCoefficient(),
-			))
-			p.redispatchTasks()
 		}
 	}
 
 	p.logger.Info("Queue processor pump shut down.")
+}
+
+func (p *queueProcessorBase) redispatchLoop() {
+	defer p.shutdownWG.Done()
+
+redispatchTaskLoop:
+	for {
+		select {
+		case <-p.shutdownCh:
+			break redispatchTaskLoop
+		case <-p.redispatchNotifyCh:
+			// TODO: revisit the cpu usage and gc activity caused by
+			// creating timers and reading dynamicconfig if it becomes a problem.
+			backoffTimer := time.NewTimer(backoff.JitDuration(
+				p.options.RedispatchInterval(),
+				p.options.RedispatchIntervalJitterCoefficient(),
+			))
+			select {
+			case <-p.shutdownCh:
+				backoffTimer.Stop()
+				break redispatchTaskLoop
+			case <-backoffTimer.C:
+			}
+			backoffTimer.Stop()
+
+			// drain redispatchNotifyCh again
+			select {
+			case <-p.redispatchNotifyCh:
+			default:
+			}
+
+			p.redispatchTasks()
+
+			if !p.redispatchQueue.IsEmpty() {
+				p.notifyRedispatch()
+			}
+		}
+	}
+
+	p.logger.Info("Queue processor task redispatch loop shut down.")
 }
 
 func (p *queueProcessorBase) processBatch() {
@@ -279,15 +340,11 @@ func (p *queueProcessorBase) processBatch() {
 		return
 	}
 
+	taskStartTime := p.timeSource.Now()
 	for _, task := range tasks {
-		if submitted := p.submitTask(task); !submitted {
-			// submitted since processor has been shutdown
+		if submitted := p.submitTask(task, taskStartTime); !submitted {
+			// not submitted since processor has been shutdown
 			return
-		}
-		select {
-		case <-p.shutdownCh:
-			return
-		default:
 		}
 	}
 
@@ -302,13 +359,15 @@ func (p *queueProcessorBase) processBatch() {
 
 func (p *queueProcessorBase) submitTask(
 	taskInfo task.Info,
+	taskStartTime time.Time,
 ) bool {
 	if !p.isPriorityTaskProcessorEnabled() {
 		return p.taskProcessor.addTask(
 			newTaskInfo(
 				p.processor,
 				taskInfo,
-				initializeLoggerForTask(p.shard.GetShardID(), taskInfo, p.logger),
+				task.InitializeLoggerForTask(p.shard.GetShardID(), taskInfo, p.logger),
+				taskStartTime,
 			),
 		)
 	}
@@ -316,10 +375,18 @@ func (p *queueProcessorBase) submitTask(
 	queueTask := p.queueTaskInitializer(taskInfo)
 	submitted, err := p.queueTaskProcessor.TrySubmit(queueTask)
 	if err != nil {
-		return false
+		select {
+		case <-p.shutdownCh:
+			// if error is due to shard shutdown
+			return false
+		default:
+			// otherwise it might be error from domain cache etc, add
+			// the task to redispatch queue so that it can be retried
+			p.logger.Error("Failed to submit task", tag.Error(err))
+		}
 	}
-	if !submitted {
-		p.redispatchQueue.Add(queueTask)
+	if err != nil || !submitted {
+		p.redispatchSingleTask(queueTask)
 	}
 
 	return true
@@ -330,7 +397,7 @@ func (p *queueProcessorBase) redispatchTasks() {
 		return
 	}
 
-	redispatchQueueTasks(
+	queue.RedispatchTasks(
 		p.redispatchQueue,
 		p.queueTaskProcessor,
 		p.logger,
@@ -353,68 +420,4 @@ func (p *queueProcessorBase) complete(
 
 func (p *queueProcessorBase) isPriorityTaskProcessorEnabled() bool {
 	return p.taskProcessor == nil
-}
-
-func redispatchQueueTasks(
-	redispatchQueue collection.Queue,
-	queueTaskProcessor task.Processor,
-	logger log.Logger,
-	metricsScope metrics.Scope,
-	shutdownCh <-chan struct{},
-) {
-	queueLength := redispatchQueue.Len()
-	metricsScope.RecordTimer(metrics.TaskRedispatchQueuePendingTasksTimer, time.Duration(queueLength))
-	for i := 0; i != queueLength; i++ {
-		queueTask := redispatchQueue.Remove().(task.Task)
-		submitted, err := queueTaskProcessor.TrySubmit(queueTask)
-		if err != nil {
-			// the only reason error will be returned here is because
-			// task processor has already shutdown. Just return in this case.
-			logger.Error("failed to redispatch task", tag.Error(err))
-			return
-		}
-		if !submitted {
-			// failed to submit, enqueue again
-			redispatchQueue.Add(queueTask)
-		}
-
-		select {
-		case <-shutdownCh:
-			return
-		default:
-		}
-	}
-}
-
-func initializeLoggerForTask(
-	shardID int,
-	task task.Info,
-	logger log.Logger,
-) log.Logger {
-
-	taskLogger := logger.WithTags(
-		tag.ShardID(shardID),
-		tag.TaskID(task.GetTaskID()),
-		tag.TaskVisibilityTimestamp(task.GetVisibilityTimestamp().UnixNano()),
-		tag.FailoverVersion(task.GetVersion()),
-		tag.TaskType(task.GetTaskType()),
-		tag.WorkflowDomainID(task.GetDomainID()),
-		tag.WorkflowID(task.GetWorkflowID()),
-		tag.WorkflowRunID(task.GetRunID()),
-	)
-
-	switch task := task.(type) {
-	case *persistence.TimerTaskInfo:
-		taskLogger = taskLogger.WithTags(
-			tag.WorkflowTimeoutType(int64(task.TimeoutType)),
-		)
-	case *persistence.TransferTaskInfo:
-		// noop
-	case *persistence.ReplicationTaskInfo:
-		// noop
-	default:
-		taskLogger.Error(fmt.Sprintf("Unknown queue task type: %v", task))
-	}
-
-	return taskLogger
 }

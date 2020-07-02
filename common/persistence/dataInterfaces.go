@@ -153,6 +153,7 @@ const (
 const (
 	ReplicationTaskTypeHistory = iota
 	ReplicationTaskTypeSyncActivity
+	ReplicationTaskTypeFailoverMarker
 )
 
 // Types of timers
@@ -256,6 +257,7 @@ type (
 		TimerFailoverLevels       map[string]TimerFailoverLevel    // uuid -> TimerFailoverLevel
 		ClusterReplicationLevel   map[string]int64                 `json:"cluster_replication_level"`
 		DomainNotificationVersion int64                            `json:"domain_notification_version"`
+		PendingFailoverMarkers    *DataBlob                        `json:"pending_failover_markers"`
 	}
 
 	// TransferFailoverLevel contains corresponding start / end level
@@ -383,6 +385,7 @@ type (
 		BranchToken       []byte
 		NewRunBranchToken []byte
 		ResetWorkflow     bool
+		CreationTime      int64
 
 		// TODO deprecate when NDC is fully released && migrated
 		LastReplicationInfo map[string]*ReplicationInfo
@@ -603,6 +606,14 @@ type (
 		TaskID              int64
 		Version             int64
 		ScheduledID         int64
+	}
+
+	// FailoverMarkerTask is the marker for graceful failover
+	FailoverMarkerTask struct {
+		TaskID              int64
+		VisibilityTimestamp time.Time
+		Version             int64
+		DomainID            string
 	}
 
 	// ReplicationInfo represents the information stored for last replication event details per cluster
@@ -1208,6 +1219,7 @@ type (
 		ConfigVersion               int64
 		FailoverVersion             int64
 		FailoverNotificationVersion int64
+		PreviousFailoverVersion     int64
 		FailoverEndTime             *int64
 		NotificationVersion         int64
 	}
@@ -1220,6 +1232,7 @@ type (
 		ConfigVersion               int64
 		FailoverVersion             int64
 		FailoverNotificationVersion int64
+		PreviousFailoverVersion     int64
 		FailoverEndTime             *int64
 		NotificationVersion         int64
 	}
@@ -1464,6 +1477,12 @@ type (
 		Branches []HistoryBranchDetail
 	}
 
+	// CreateFailoverMarkersRequest is request to create failover markers
+	CreateFailoverMarkersRequest struct {
+		RangeID int64
+		Markers []*FailoverMarkerTask
+	}
+
 	// Closeable is an interface for any entity that supports a close operation to release resources
 	Closeable interface {
 		Close()
@@ -1506,6 +1525,7 @@ type (
 		GetReplicationTasksFromDLQ(request *GetReplicationTasksFromDLQRequest) (*GetReplicationTasksFromDLQResponse, error)
 		DeleteReplicationTaskFromDLQ(request *DeleteReplicationTaskFromDLQRequest) error
 		RangeDeleteReplicationTaskFromDLQ(request *RangeDeleteReplicationTaskFromDLQRequest) error
+		CreateFailoverMarkerTasks(request *CreateFailoverMarkersRequest) error
 
 		// Timer related methods.
 		GetTimerIndexTasks(request *GetTimerIndexTasksRequest) (*GetTimerIndexTasksResponse, error)
@@ -2253,6 +2273,41 @@ func (a *SyncActivityTask) GetVisibilityTimestamp() time.Time {
 
 // SetVisibilityTimestamp set the visibility timestamp
 func (a *SyncActivityTask) SetVisibilityTimestamp(timestamp time.Time) {
+	a.VisibilityTimestamp = timestamp
+}
+
+// GetType returns the type of the history replication task
+func (a *FailoverMarkerTask) GetType() int {
+	return ReplicationTaskTypeFailoverMarker
+}
+
+// GetVersion returns the version of the history replication task
+func (a *FailoverMarkerTask) GetVersion() int64 {
+	return a.Version
+}
+
+// SetVersion returns the version of the history replication task
+func (a *FailoverMarkerTask) SetVersion(version int64) {
+	a.Version = version
+}
+
+// GetTaskID returns the sequence ID of the history replication task
+func (a *FailoverMarkerTask) GetTaskID() int64 {
+	return a.TaskID
+}
+
+// SetTaskID sets the sequence ID of the history replication task
+func (a *FailoverMarkerTask) SetTaskID(id int64) {
+	a.TaskID = id
+}
+
+// GetVisibilityTimestamp get the visibility timestamp
+func (a *FailoverMarkerTask) GetVisibilityTimestamp() time.Time {
+	return a.VisibilityTimestamp
+}
+
+// SetVisibilityTimestamp set the visibility timestamp
+func (a *FailoverMarkerTask) SetVisibilityTimestamp(timestamp time.Time) {
 	a.VisibilityTimestamp = timestamp
 }
 
