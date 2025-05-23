@@ -20,33 +20,38 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package sqlite
+package queuev2
 
-import (
-	"errors"
+import "github.com/uber/cadence/common/persistence"
 
-	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
-)
-
-const (
-	listTablesQuery = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-)
-
-// CreateDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) CreateDatabase(name string) error {
-	return errors.New("sqlite doesn't support creating database")
+type QueueState struct {
+	VirtualQueueStates    map[int64][]VirtualSliceState
+	ExclusiveMaxReadLevel persistence.HistoryTaskKey
 }
 
-// DropDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) DropDatabase(name string) error {
-	return errors.New("sqlite doesn't support dropping database")
+type VirtualSliceState struct {
+	Range     Range
+	Predicate Predicate
 }
 
-// ListTables returns a list of tables in this database
-func (mdb *DB) ListTables(_ string) ([]string, error) {
-	var tables []string
-	err := mdb.driver.SelectForSchemaQuery(sqlplugin.DbShardUndefined, &tables, listTablesQuery)
-	return tables, err
+func (s *VirtualSliceState) IsEmpty() bool {
+	return s.Range.IsEmpty() || s.Predicate.IsEmpty()
+}
+
+func (s *VirtualSliceState) Contains(task persistence.Task) bool {
+	return s.Range.Contains(task.GetTaskKey()) && s.Predicate.Check(task)
+}
+
+func (s *VirtualSliceState) TrySplitByTaskKey(taskKey persistence.HistoryTaskKey) (VirtualSliceState, VirtualSliceState, bool) {
+	if !s.Range.CanSplitByTaskKey(taskKey) {
+		return VirtualSliceState{}, VirtualSliceState{}, false
+	}
+
+	return VirtualSliceState{
+			Range:     Range{InclusiveMinTaskKey: s.Range.InclusiveMinTaskKey, ExclusiveMaxTaskKey: taskKey},
+			Predicate: s.Predicate,
+		}, VirtualSliceState{
+			Range:     Range{InclusiveMinTaskKey: taskKey, ExclusiveMaxTaskKey: s.Range.ExclusiveMaxTaskKey},
+			Predicate: s.Predicate,
+		}, true
 }

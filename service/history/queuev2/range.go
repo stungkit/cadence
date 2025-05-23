@@ -20,33 +20,34 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package sqlite
+package queuev2
 
 import (
-	"errors"
-
-	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
+	"github.com/uber/cadence/common/persistence"
 )
 
-const (
-	listTablesQuery = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-)
-
-// CreateDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) CreateDatabase(name string) error {
-	return errors.New("sqlite doesn't support creating database")
+type Range struct {
+	InclusiveMinTaskKey persistence.HistoryTaskKey
+	ExclusiveMaxTaskKey persistence.HistoryTaskKey
 }
 
-// DropDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) DropDatabase(name string) error {
-	return errors.New("sqlite doesn't support dropping database")
+func (r *Range) IsEmpty() bool {
+	return r.InclusiveMinTaskKey.Compare(r.ExclusiveMaxTaskKey) >= 0
 }
 
-// ListTables returns a list of tables in this database
-func (mdb *DB) ListTables(_ string) ([]string, error) {
-	var tables []string
-	err := mdb.driver.SelectForSchemaQuery(sqlplugin.DbShardUndefined, &tables, listTablesQuery)
-	return tables, err
+func (r *Range) Contains(taskKey persistence.HistoryTaskKey) bool {
+	return taskKey.Compare(r.InclusiveMinTaskKey) >= 0 && taskKey.Compare(r.ExclusiveMaxTaskKey) < 0
+}
+
+func (r *Range) ContainsRange(other Range) bool {
+	return r.InclusiveMinTaskKey.Compare(other.InclusiveMinTaskKey) <= 0 && r.ExclusiveMaxTaskKey.Compare(other.ExclusiveMaxTaskKey) >= 0
+}
+
+func (r *Range) CanMerge(other Range) bool {
+	return r.InclusiveMinTaskKey.Compare(other.ExclusiveMaxTaskKey) <= 0 && r.ExclusiveMaxTaskKey.Compare(other.InclusiveMinTaskKey) >= 0
+}
+
+// TODO: review this to figure out whether we should allow exclusive max task key
+func (r *Range) CanSplitByTaskKey(taskKey persistence.HistoryTaskKey) bool {
+	return r.Contains(taskKey) || r.ExclusiveMaxTaskKey.Compare(taskKey) == 0
 }

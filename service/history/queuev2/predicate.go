@@ -20,33 +20,32 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package sqlite
+//go:generate mockgen -package $GOPACKAGE -destination predicate_mock.go github.com/uber/cadence/service/history/queuev2 Predicate
 
-import (
-	"errors"
+package queuev2
 
-	"github.com/uber/cadence/common/persistence/sql/sqlplugin"
+import "github.com/uber/cadence/common/persistence"
+
+type (
+	// Predicate defines a predicate that can be used to filter tasks
+	Predicate interface {
+		// IsEmpty returns true if no task satisfies the predicate
+		IsEmpty() bool
+		// Check returns true if the task satisfies the predicate
+		Check(task persistence.Task) bool
+	}
+
+	universalPredicate struct{}
 )
 
-const (
-	listTablesQuery = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-)
-
-// CreateDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) CreateDatabase(name string) error {
-	return errors.New("sqlite doesn't support creating database")
+func NewUniversalPredicate() Predicate {
+	return &universalPredicate{}
 }
 
-// DropDatabase is not supported by sqlite
-// each sqlite file is a database
-func (mdb *DB) DropDatabase(name string) error {
-	return errors.New("sqlite doesn't support dropping database")
+func (p *universalPredicate) IsEmpty() bool {
+	return false
 }
 
-// ListTables returns a list of tables in this database
-func (mdb *DB) ListTables(_ string) ([]string, error) {
-	var tables []string
-	err := mdb.driver.SelectForSchemaQuery(sqlplugin.DbShardUndefined, &tables, listTablesQuery)
-	return tables, err
+func (p *universalPredicate) Check(task persistence.Task) bool {
+	return true
 }
