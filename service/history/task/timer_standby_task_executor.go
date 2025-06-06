@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/service/history/config"
 	"github.com/uber/cadence/service/history/execution"
 	"github.com/uber/cadence/service/history/shard"
+	"github.com/uber/cadence/service/history/simulation"
 	"github.com/uber/cadence/service/worker/archiver"
 )
 
@@ -47,8 +48,9 @@ type (
 	timerStandbyTaskExecutor struct {
 		*timerTaskExecutorBase
 
-		clusterName     string
-		historyResender ndc.HistoryResender
+		clusterName            string
+		historyResender        ndc.HistoryResender
+		getRemoteClusterNameFn func(context.Context, persistence.Task) (string, error)
 	}
 )
 
@@ -74,10 +76,26 @@ func NewTimerStandbyTaskExecutor(
 		),
 		clusterName:     clusterName,
 		historyResender: historyResender,
+		getRemoteClusterNameFn: func(ctx context.Context, taskInfo persistence.Task) (string, error) {
+			return getRemoteClusterName(ctx, clusterName, shard.GetDomainCache(), shard.GetActiveClusterManager(), taskInfo)
+		},
 	}
 }
 
 func (t *timerStandbyTaskExecutor) Execute(task Task) (metrics.Scope, error) {
+	simulation.LogEvents(simulation.E{
+		EventName:  simulation.EventNameExecuteHistoryTask,
+		Host:       t.shard.GetConfig().HostName,
+		ShardID:    t.shard.GetShardID(),
+		DomainID:   task.GetDomainID(),
+		WorkflowID: task.GetWorkflowID(),
+		RunID:      task.GetRunID(),
+		Payload: map[string]any{
+			"task_category": persistence.HistoryTaskCategoryTimer.Name(),
+			"task_type":     task.GetTaskType(),
+			"task_key":      task.GetTaskKey(),
+		},
+	})
 	scope := getOrCreateDomainTaggedScope(t.shard, GetTimerTaskMetricScope(task.GetTaskType(), false), task.GetDomainID(), t.logger)
 	switch timerTask := task.GetInfo().(type) {
 	case *persistence.UserTimerTask:
@@ -482,7 +500,7 @@ func (t *timerStandbyTaskExecutor) processTimer(
 }
 
 func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
-	_ context.Context,
+	ctx context.Context,
 	taskInfo persistence.Task,
 	postActionInfo interface{},
 	_ log.Logger,
@@ -498,12 +516,15 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 	stopwatch := t.metricsClient.StartTimer(metrics.HistoryRereplicationByTimerTaskScope, metrics.CadenceClientLatency)
 	defer stopwatch.Stop()
 
-	var err error
+	remoteClusterName, err := t.getRemoteClusterNameFn(ctx, taskInfo)
+	if err != nil {
+		return err
+	}
 	if resendInfo.lastEventID != nil && resendInfo.lastEventVersion != nil {
 		// note history resender doesn't take in a context parameter, there's a separate dynamicconfig for
 		// controlling the timeout for resending history.
 		err = t.historyResender.SendSingleWorkflowHistory(
-			t.clusterName,
+			remoteClusterName,
 			taskInfo.GetDomainID(),
 			taskInfo.GetWorkflowID(),
 			taskInfo.GetRunID(),
@@ -524,7 +545,7 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 			tag.WorkflowDomainID(taskInfo.GetDomainID()),
 			tag.WorkflowID(taskInfo.GetWorkflowID()),
 			tag.WorkflowRunID(taskInfo.GetRunID()),
-			tag.SourceCluster(t.clusterName),
+			tag.SourceCluster(remoteClusterName),
 			tag.Error(err),
 		)
 	} else if t.logger.DebugOn() {
@@ -534,7 +555,7 @@ func (t *timerStandbyTaskExecutor) fetchHistoryFromRemote(
 			tag.WorkflowDomainID(taskInfo.GetDomainID()),
 			tag.TaskID(taskInfo.GetTaskID()),
 			tag.TaskType(int(taskInfo.GetTaskType())),
-			tag.SourceCluster(t.clusterName),
+			tag.SourceCluster(remoteClusterName),
 		)
 	}
 
