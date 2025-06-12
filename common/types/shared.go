@@ -808,6 +808,7 @@ type ContinueAsNewWorkflowExecutionDecisionAttributes struct {
 	Memo                                *Memo                   `json:"memo,omitempty"`
 	SearchAttributes                    *SearchAttributes       `json:"searchAttributes,omitempty"`
 	JitterStartSeconds                  *int32                  `json:"jitterStartSeconds,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy      `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetExecutionStartToCloseTimeoutSeconds is an internal getter (TBD...)
@@ -2033,10 +2034,11 @@ func (v *DomainInfo) GetUUID() (o string) {
 // this is a retriable error and *must* be retried under at least
 // some circumstances due to domain failover races.
 type DomainNotActiveError struct {
-	Message        string `json:"message"`
-	DomainName     string `json:"domainName"`
-	CurrentCluster string `json:"currentCluster"`
-	ActiveCluster  string `json:"activeCluster,omitempty"`
+	Message        string   `json:"message"`
+	DomainName     string   `json:"domainName"`
+	CurrentCluster string   `json:"currentCluster"`
+	ActiveCluster  string   `json:"activeCluster,omitempty"`
+	ActiveClusters []string `json:"activeClusters,omitempty"`
 }
 
 // GetCurrentCluster is an internal getter (TBD...)
@@ -2055,10 +2057,19 @@ func (v *DomainNotActiveError) GetActiveCluster() (o string) {
 	return
 }
 
+// GetActiveClusters is an internal getter (TBD...)
+func (v *DomainNotActiveError) GetActiveClusters() (o []string) {
+	if v != nil {
+		return v.ActiveClusters
+	}
+	return
+}
+
 // DomainReplicationConfiguration is an internal type (TBD...)
 type DomainReplicationConfiguration struct {
 	ActiveClusterName string                             `json:"activeClusterName,omitempty"`
 	Clusters          []*ClusterReplicationConfiguration `json:"clusters,omitempty"`
+	ActiveClusters    *ActiveClusters                    `json:"activeClusters,omitempty"`
 }
 
 // GetActiveClusterName is an internal getter (TBD...)
@@ -2075,6 +2086,35 @@ func (v *DomainReplicationConfiguration) GetClusters() (o []*ClusterReplicationC
 		return v.Clusters
 	}
 	return
+}
+
+func (v *DomainReplicationConfiguration) GetActiveClusters() (o *ActiveClusters) {
+	if v != nil && v.ActiveClusters != nil {
+		return v.ActiveClusters
+	}
+	return
+}
+
+type ActiveClusters struct {
+	ActiveClustersByRegion map[string]ActiveClusterInfo `json:"activeClustersByRegion,omitempty"`
+}
+
+type ActiveClusterInfo struct {
+	ActiveClusterName string `json:"activeClusterName,omitempty"`
+	FailoverVersion   int64  `json:"failoverVersion,omitempty"`
+}
+
+func (v *ActiveClusters) DeepCopy() *ActiveClusters {
+	if v == nil {
+		return nil
+	}
+	activeClustersByRegion := make(map[string]ActiveClusterInfo)
+	for region, activeClusterInfo := range v.ActiveClustersByRegion {
+		activeClustersByRegion[region] = activeClusterInfo
+	}
+	return &ActiveClusters{
+		ActiveClustersByRegion: activeClustersByRegion,
+	}
 }
 
 // DomainStatus is an internal type (TBD...)
@@ -2188,11 +2228,10 @@ const (
 
 // EntityNotExistsError is an internal type (TBD...)
 type EntityNotExistsError struct {
-	Message        string `json:"message,required"`
-	CurrentCluster string `json:"currentCluster,omitempty"`
-	ActiveCluster  string `json:"activeCluster,omitempty"`
-	// TODO(active-active): Add ActiveClusters field
-	// ActiveClusters []string `json:"activeClusters,omitempty"`
+	Message        string   `json:"message,required"`
+	CurrentCluster string   `json:"currentCluster,omitempty"`
+	ActiveCluster  string   `json:"activeCluster,omitempty"`
+	ActiveClusters []string `json:"activeClusters,omitempty"`
 }
 
 // WorkflowExecutionAlreadyCompletedError is an internal type (TBD...)
@@ -4803,6 +4842,7 @@ type RegisterDomainRequest struct {
 	EmitMetric                             *bool                              `json:"emitMetric,omitempty"`
 	Clusters                               []*ClusterReplicationConfiguration `json:"clusters,omitempty"`
 	ActiveClusterName                      string                             `json:"activeClusterName,omitempty"`
+	ActiveClustersByRegion                 map[string]string                  `json:"activeClustersByRegion,omitempty"`
 	Data                                   map[string]string                  `json:"data,omitempty"`
 	SecurityToken                          string                             `json:"securityToken,omitempty"`
 	IsGlobalDomain                         bool                               `json:"isGlobalDomain,omitempty"`
@@ -4857,6 +4897,14 @@ func (v *RegisterDomainRequest) GetEmitMetric() (o bool) {
 func (v *RegisterDomainRequest) GetActiveClusterName() (o string) {
 	if v != nil {
 		return v.ActiveClusterName
+	}
+	return
+}
+
+// GetActiveClustersByRegion is an internal getter (TBD...)
+func (v *RegisterDomainRequest) GetActiveClustersByRegion() (o map[string]string) {
+	if v != nil {
+		return v.ActiveClustersByRegion
 	}
 	return
 }
@@ -6137,6 +6185,7 @@ type SignalWithStartWorkflowExecutionRequest struct {
 	DelayStartSeconds                   *int32                 `json:"delayStartSeconds,omitempty"`
 	JitterStartSeconds                  *int32                 `json:"jitterStartSeconds,omitempty"`
 	FirstRunAtTimestamp                 *int64                 `json:"firstRunAtTimestamp,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy     `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetDomain is an internal getter (TBD...)
@@ -6320,6 +6369,7 @@ type StartChildWorkflowExecutionDecisionAttributes struct {
 	Header                              *Header                `json:"header,omitempty"`
 	Memo                                *Memo                  `json:"memo,omitempty"`
 	SearchAttributes                    *SearchAttributes      `json:"searchAttributes,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy     `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetDomain is an internal getter (TBD...)
@@ -6423,6 +6473,7 @@ type StartChildWorkflowExecutionInitiatedEventAttributes struct {
 	DelayStartSeconds                   *int32                 `json:"delayStartSeconds,omitempty"`
 	JitterStartSeconds                  *int32                 `json:"jitterStartSeconds,omitempty"`
 	FirstRunAtTimestamp                 *int64                 `json:"firstRunAtTimestamp,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy     `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetDomain is an internal getter (TBD...)
@@ -6607,6 +6658,7 @@ type StartWorkflowExecutionRequest struct {
 	DelayStartSeconds                   *int32                 `json:"delayStartSeconds,omitempty"`
 	JitterStartSeconds                  *int32                 `json:"jitterStartSeconds,omitempty"`
 	FirstRunAtTimeStamp                 *int64                 `json:"firstRunAtTimeStamp,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy     `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetDomain is an internal getter (TBD...)
@@ -6685,6 +6737,14 @@ func (v *StartWorkflowExecutionRequest) GetWorkflowIDReusePolicy() (o WorkflowID
 func (v *StartWorkflowExecutionRequest) GetCronSchedule() (o string) {
 	if v != nil {
 		return v.CronSchedule
+	}
+	return
+}
+
+// GetCronOverlapPolicy is an internal getter (TBD...)
+func (v *StartWorkflowExecutionRequest) GetCronOverlapPolicy() (o CronOverlapPolicy) {
+	if v != nil && v.CronOverlapPolicy != nil {
+		return *v.CronOverlapPolicy
 	}
 	return
 }
@@ -7190,6 +7250,7 @@ type UpdateDomainRequest struct {
 	VisibilityArchivalStatus               *ArchivalStatus                    `json:"visibilityArchivalStatus,omitempty"`
 	VisibilityArchivalURI                  *string                            `json:"visibilityArchivalURI,omitempty"`
 	ActiveClusterName                      *string                            `json:"activeClusterName,omitempty"`
+	ActiveClusters                         *ActiveClusters                    `json:"activeClusters,omitempty"`
 	Clusters                               []*ClusterReplicationConfiguration `json:"clusters,omitempty"`
 	SecurityToken                          string                             `json:"securityToken,omitempty"`
 	DeleteBadBinary                        *string                            `json:"deleteBadBinary,omitempty"`
@@ -7626,7 +7687,8 @@ type WorkflowExecutionInfo struct {
 	TaskList          string                        `json:"taskList,omitempty"`
 	IsCron            bool                          `json:"isCron,omitempty"`
 	UpdateTime        *int64                        `json:"updateTime,omitempty"`
-	PartitionConfig   map[string]string
+	PartitionConfig   map[string]string             `json:"partitionConfig,omitempty"`
+	CronOverlapPolicy *CronOverlapPolicy            `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetExecution is an internal getter (TBD...)
@@ -7776,8 +7838,9 @@ type WorkflowExecutionStartedEventAttributes struct {
 	PrevAutoResetPoints                 *ResetPoints            `json:"prevAutoResetPoints,omitempty"`
 	Header                              *Header                 `json:"header,omitempty"`
 	JitterStartSeconds                  *int32                  `json:"jitterStartSeconds,omitempty"`
-	PartitionConfig                     map[string]string
-	RequestID                           string `json:"requestId,omitempty"`
+	PartitionConfig                     map[string]string       `json:"partitionConfig,omitempty"`
+	RequestID                           string                  `json:"requestId,omitempty"`
+	CronOverlapPolicy                   *CronOverlapPolicy      `json:"cronOverlapPolicy,omitempty"`
 }
 
 // GetParentWorkflowDomain is an internal getter (TBD...)
@@ -7836,7 +7899,7 @@ func (v *WorkflowExecutionStartedEventAttributes) GetFirstExecutionRunID() (o st
 	return
 }
 
-// Get
+// GetFirstScheduledTime is an internal getter (TBD...)
 func (v *WorkflowExecutionStartedEventAttributes) GetFirstScheduledTime() (o time.Time) {
 	if v != nil && v.FirstScheduleTime != nil {
 		return *v.FirstScheduleTime
@@ -8651,4 +8714,26 @@ type Any struct {
 type AutoConfigHint struct {
 	EnableAutoConfig   bool  `json:"enableAutoConfig"`
 	PollerWaitTimeInMs int64 `json:"pollerWaitTimeInMs"`
+}
+
+type CronOverlapPolicy int32
+
+const (
+	CronOverlapPolicySkipped CronOverlapPolicy = iota
+	CronOverlapPolicyBufferOne
+)
+
+func (v CronOverlapPolicy) String() string {
+	switch v {
+	case CronOverlapPolicySkipped:
+		return "SKIP"
+	case CronOverlapPolicyBufferOne:
+		return "BUFFERONE"
+	}
+	return "UNKNOWN"
+}
+
+// Ptr is a helper function for getting pointer to CronOverlapPolicy
+func (v CronOverlapPolicy) Ptr() *CronOverlapPolicy {
+	return &v
 }

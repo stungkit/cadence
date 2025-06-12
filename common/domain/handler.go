@@ -113,9 +113,9 @@ type (
 	// FailoverEvent is the failover information to be stored for each failover event in domain data
 	FailoverEvent struct {
 		EventTime    time.Time `json:"eventTime"`
-		FromCluster  string    `json:"fromCluster"`
-		ToCluster    string    `json:"toCluster"`
-		FailoverType string    `json:"failoverType"`
+		FromCluster  string    `json:"fromCluster,omitempty"`
+		ToCluster    string    `json:"toCluster,omitempty"`
+		FailoverType string    `json:"failoverType,omitempty"`
 	}
 
 	// FailoverHistory is the history of failovers for a domain limited by the FailoverHistoryMaxSize config
@@ -252,9 +252,16 @@ func (d *handlerImpl) RegisterDomain(
 		VisibilityArchivalURI:    nextVisibilityArchivalState.URI,
 		BadBinaries:              types.BadBinaries{Binaries: map[string]*types.BadBinaryInfo{}},
 	}
+
+	activeClusters, err := d.activeClustersFromRegisterRequest(registerRequest)
+	if err != nil {
+		return err
+	}
+
 	replicationConfig := &persistence.DomainReplicationConfig{
 		ActiveClusterName: activeClusterName,
 		Clusters:          clusters,
+		ActiveClusters:    activeClusters,
 	}
 	isGlobalDomain := registerRequest.GetIsGlobalDomain()
 
@@ -470,6 +477,7 @@ func (d *handlerImpl) UpdateDomain(
 
 	// Update replication config
 	replicationConfig, replicationConfigChanged, activeClusterChanged, err := d.updateReplicationConfig(
+		getResponse.Info.Name,
 		replicationConfig,
 		updateRequest,
 	)
@@ -529,14 +537,18 @@ func (d *handlerImpl) UpdateDomain(
 				gracefulFailoverEndTime = nil
 				previousFailoverVersion = constants.InitialPreviousFailoverVersion
 			}
-			failoverVersion = d.clusterMetadata.GetNextFailoverVersion(
-				replicationConfig.ActiveClusterName,
-				failoverVersion,
-				updateRequest.Name,
-			)
-			err = updateFailoverHistory(info, d.config, now, currentActiveCluster, *updateRequest.ActiveClusterName, failoverType)
-			if err != nil {
-				d.logger.Warn("failed to update failover history", tag.Error(err))
+
+			if !replicationConfig.IsActiveActive() {
+				failoverVersion = d.clusterMetadata.GetNextFailoverVersion(
+					replicationConfig.ActiveClusterName,
+					failoverVersion,
+					updateRequest.Name,
+				)
+
+				err = updateFailoverHistory(info, d.config, now, currentActiveCluster, *updateRequest.ActiveClusterName, failoverType)
+				if err != nil {
+					d.logger.Warn("failed to update failover history", tag.Error(err))
+				}
 			}
 
 			failoverNotificationVersion = notificationVersion
@@ -944,6 +956,7 @@ func (d *handlerImpl) createResponse(
 	replicationConfigResult := &types.DomainReplicationConfiguration{
 		ActiveClusterName: replicationConfig.ActiveClusterName,
 		Clusters:          clusters,
+		ActiveClusters:    replicationConfig.ActiveClusters,
 	}
 
 	return infoResult, configResult, replicationConfigResult
@@ -1201,6 +1214,7 @@ func (d *handlerImpl) updateDeleteBadBinary(
 }
 
 func (d *handlerImpl) updateReplicationConfig(
+	domainName string,
 	config *persistence.DomainReplicationConfig,
 	updateRequest *types.UpdateDomainRequest,
 ) (*persistence.DomainReplicationConfig, bool, bool, error) {
@@ -1230,7 +1244,44 @@ func (d *handlerImpl) updateReplicationConfig(
 		config.ActiveClusterName = *updateRequest.ActiveClusterName
 	}
 
-	// TODO(active-active): handle active-active case here which would be updateRequest.ActiveClusters != nil.
+	if updateRequest.ActiveClusters != nil && updateRequest.ActiveClusters.ActiveClustersByRegion != nil {
+		existingActiveClusters := config.ActiveClusters
+		finalActiveClusters := make(map[string]types.ActiveClusterInfo)
+
+		// first add the ones that are not touched
+		for region, activeCluster := range existingActiveClusters.ActiveClustersByRegion {
+			if _, ok := updateRequest.ActiveClusters.ActiveClustersByRegion[region]; !ok {
+				finalActiveClusters[region] = activeCluster
+			}
+		}
+
+		// then add the ones that are modified
+		for region, activeCluster := range updateRequest.ActiveClusters.ActiveClustersByRegion {
+			existingActiveCluster, ok := existingActiveClusters.ActiveClustersByRegion[region]
+			if !ok {
+				// a cluster is being activated on a region that didn't have any active cluster before
+				// initialize failover version to the initial failover version of the cluster
+				activeCluster.FailoverVersion = d.clusterMetadata.GetNextFailoverVersion(activeCluster.ActiveClusterName, 0, domainName)
+				finalActiveClusters[region] = activeCluster
+				continue
+			}
+
+			// handle modification of an active cluster change on a region that had an active cluster before
+			if existingActiveCluster.ActiveClusterName != activeCluster.ActiveClusterName {
+				// a cluster is being deactivated on a region that had an active cluster before
+				// set failover version to the next failover version of the newcluster
+				activeCluster.FailoverVersion = d.clusterMetadata.GetNextFailoverVersion(activeCluster.ActiveClusterName, existingActiveCluster.FailoverVersion, domainName)
+				finalActiveClusters[region] = activeCluster
+			} else {
+				// no update case, just copy the existing active cluster
+				finalActiveClusters[region] = activeCluster
+			}
+		}
+		config.ActiveClusters = &types.ActiveClusters{
+			ActiveClustersByRegion: finalActiveClusters,
+		}
+		activeClusterUpdated = true
+	}
 
 	return config, clusterUpdated, activeClusterUpdated, nil
 }
@@ -1245,7 +1296,7 @@ func (d *handlerImpl) handleGracefulFailover(
 	isGlobalDomain bool,
 ) (*int64, int64, error) {
 	// must update active cluster on a global domain
-	if !activeClusterChanged || !isGlobalDomain {
+	if !activeClusterChanged || !isGlobalDomain || replicationConfig.IsActiveActive() {
 		return nil, 0, errInvalidGracefulFailover
 	}
 	// must start with the passive -> active cluster
@@ -1296,6 +1347,40 @@ func (d *handlerImpl) validateDomainReplicationConfigForUpdateDomain(
 	}
 
 	return nil
+}
+
+func (d *handlerImpl) activeClustersFromRegisterRequest(registerRequest *types.RegisterDomainRequest) (*types.ActiveClusters, error) {
+	if !registerRequest.GetIsGlobalDomain() || registerRequest.ActiveClustersByRegion == nil {
+		// local or active-passive domain
+		return nil, nil
+	}
+
+	// Initialize ActiveClustersByRegion with given cluster names and their initial failover versions
+	activeClustersByRegion := make(map[string]types.ActiveClusterInfo, len(registerRequest.ActiveClustersByRegion))
+	clusters := d.clusterMetadata.GetAllClusterInfo()
+	regions := d.clusterMetadata.GetAllRegionInfo()
+	for region, cluster := range registerRequest.ActiveClustersByRegion {
+		if _, ok := regions[region]; !ok {
+			return nil, &types.BadRequestError{
+				Message: fmt.Sprintf("Region %v not found. Domain cannot be registered in this region.", region),
+			}
+		}
+
+		clusterInfo, ok := clusters[cluster]
+		if !ok {
+			return nil, &types.BadRequestError{
+				Message: fmt.Sprintf("Cluster %v not found. Domain cannot be registered in this cluster.", cluster),
+			}
+		}
+
+		activeClustersByRegion[region] = types.ActiveClusterInfo{
+			ActiveClusterName: cluster,
+			FailoverVersion:   clusterInfo.InitialFailoverVersion,
+		}
+	}
+	return &types.ActiveClusters{
+		ActiveClustersByRegion: activeClustersByRegion,
+	}, nil
 }
 
 func getDomainStatus(info *persistence.DomainInfo) *types.DomainStatus {

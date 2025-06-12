@@ -47,6 +47,7 @@ import (
 	"github.com/uber/cadence/service/history/engine"
 	"github.com/uber/cadence/service/history/events"
 	"github.com/uber/cadence/service/history/resource"
+	"github.com/uber/cadence/service/history/simulation"
 )
 
 type (
@@ -243,7 +244,7 @@ func (s *contextImpl) updateScheduledTaskMaxReadLevel(cluster string) persistenc
 		currentTime = s.remoteClusterCurrentTime[cluster]
 	}
 
-	newMaxReadLevel := currentTime.Add(s.config.TimerProcessorMaxTimeShift()).Truncate(time.Millisecond)
+	newMaxReadLevel := currentTime.Add(s.config.TimerProcessorMaxTimeShift()).Truncate(persistence.DBTimestampMinPrecision)
 	if newMaxReadLevel.After(s.scheduledTaskMaxReadLevelMap[cluster]) {
 		s.scheduledTaskMaxReadLevelMap[cluster] = newMaxReadLevel
 	}
@@ -605,26 +606,6 @@ func (s *contextImpl) UpdateDomainNotificationVersion(domainNotificationVersion 
 	return s.updateShardInfoLocked()
 }
 
-func (s *contextImpl) GetTimerMaxReadLevel(cluster string) time.Time {
-	s.RLock()
-	defer s.RUnlock()
-
-	return s.scheduledTaskMaxReadLevelMap[cluster]
-}
-
-func (s *contextImpl) UpdateTimerMaxReadLevel(cluster string) time.Time {
-	s.Lock()
-	defer s.Unlock()
-
-	currentTime := s.GetTimeSource().Now()
-	if cluster != "" && cluster != s.GetClusterMetadata().GetCurrentClusterName() {
-		currentTime = s.remoteClusterCurrentTime[cluster]
-	}
-
-	s.scheduledTaskMaxReadLevelMap[cluster] = currentTime.Add(s.config.TimerProcessorMaxTimeShift()).Truncate(time.Millisecond)
-	return s.scheduledTaskMaxReadLevelMap[cluster]
-}
-
 func (s *contextImpl) GetWorkflowExecution(
 	ctx context.Context,
 	request *persistence.GetWorkflowExecutionRequest,
@@ -685,6 +666,7 @@ func (s *contextImpl) CreateWorkflowExecution(
 	case nil:
 		// Update MaxReadLevel if write to DB succeeds
 		s.updateMaxReadLevelLocked(immediateTaskMaxReadLevel)
+		s.logCreateWorkflowExecutionEvents(request)
 		return response, nil
 	case *types.WorkflowExecutionAlreadyStartedError,
 		*persistence.WorkflowExecutionAlreadyStartedError,
@@ -789,6 +771,7 @@ func (s *contextImpl) UpdateWorkflowExecution(
 	case nil:
 		// Update MaxReadLevel if write to DB succeeds
 		s.updateMaxReadLevelLocked(immediateTaskMaxReadLevel)
+		s.logUpdateWorkflowExecutionEvents(request)
 		return resp, nil
 	case *persistence.ConditionFailedError,
 		*persistence.DuplicateRequestError,
@@ -897,6 +880,7 @@ func (s *contextImpl) ConflictResolveWorkflowExecution(
 	case nil:
 		// Update MaxReadLevel if write to DB succeeds
 		s.updateMaxReadLevelLocked(immediateTaskMaxReadLevel)
+		s.logConflictResolveWorkflowExecutionEvents(request)
 		return resp, nil
 	case *persistence.ConditionFailedError,
 		*types.ServiceBusyError:
@@ -1315,7 +1299,7 @@ func (s *contextImpl) allocateTimerIDsLocked(
 	// assign IDs for the timer tasks. They need to be assigned under shard lock.
 	cluster := s.GetClusterMetadata().GetCurrentClusterName()
 	for _, task := range timerTasks {
-		ts := task.GetVisibilityTimestamp()
+		ts := task.GetVisibilityTimestamp().Truncate(persistence.DBTimestampMinPrecision)
 		if task.GetVersion() != constants.EmptyVersion {
 			// cannot use version to determine the corresponding cluster for timer task
 			// this is because during failover, timer task should be created as active
@@ -1343,8 +1327,9 @@ func (s *contextImpl) allocateTimerIDsLocked(
 				tag.CursorTimestamp(readCursorTS),
 				tag.ClusterName(cluster),
 				tag.ValueShardAllocateTimerBeforeRead)
-			task.SetVisibilityTimestamp(s.scheduledTaskMaxReadLevelMap[cluster].Add(time.Millisecond))
+			ts = readCursorTS.Add(persistence.DBTimestampMinPrecision)
 		}
+		task.SetVisibilityTimestamp(ts)
 
 		seqNum, err := s.generateTaskIDLocked()
 		if err != nil {
@@ -1573,7 +1558,7 @@ func acquireShard(
 			scheduledTaskMaxReadLevelMap[clusterName] = shardInfo.TimerAckLevel
 		}
 
-		scheduledTaskMaxReadLevelMap[clusterName] = scheduledTaskMaxReadLevelMap[clusterName].Truncate(time.Millisecond)
+		scheduledTaskMaxReadLevelMap[clusterName] = scheduledTaskMaxReadLevelMap[clusterName].Truncate(persistence.DBTimestampMinPrecision)
 	}
 
 	executionMgr, err := shardItem.GetExecutionManager(shardItem.shardID)
@@ -1616,4 +1601,84 @@ func acquireShard(
 	}
 
 	return context, nil
+}
+
+func (s *contextImpl) getEventsFromWorkflowSnapshot(snapshot *persistence.WorkflowSnapshot) []simulation.E {
+	if snapshot == nil {
+		return nil
+	}
+	var events []simulation.E
+	for category, tasks := range snapshot.TasksByCategory {
+		for _, task := range tasks {
+			events = append(events, simulation.E{
+				EventName:  simulation.EventNameCreateHistoryTask,
+				Host:       s.config.HostName,
+				ShardID:    s.shardID,
+				DomainID:   task.GetDomainID(),
+				WorkflowID: task.GetWorkflowID(),
+				RunID:      task.GetRunID(),
+				Payload: map[string]any{
+					"task_category": category.Name(),
+					"task_type":     task.GetTaskType(),
+					"task_key":      task.GetTaskKey(),
+				},
+			})
+		}
+	}
+	return events
+}
+
+func (s *contextImpl) getEventsFromWorkflowMutation(mutation *persistence.WorkflowMutation) []simulation.E {
+	if mutation == nil {
+		return nil
+	}
+	var events []simulation.E
+	for category, tasks := range mutation.TasksByCategory {
+		for _, task := range tasks {
+			events = append(events, simulation.E{
+				EventName:  simulation.EventNameCreateHistoryTask,
+				Host:       s.config.HostName,
+				ShardID:    s.shardID,
+				DomainID:   task.GetDomainID(),
+				WorkflowID: task.GetWorkflowID(),
+				RunID:      task.GetRunID(),
+				Payload: map[string]any{
+					"task_category": category.Name(),
+					"task_type":     task.GetTaskType(),
+					"task_key":      task.GetTaskKey(),
+				},
+			})
+		}
+	}
+	return events
+}
+
+func (s *contextImpl) logCreateWorkflowExecutionEvents(request *persistence.CreateWorkflowExecutionRequest) {
+	if !simulation.Enabled() {
+		return
+	}
+	events := s.getEventsFromWorkflowSnapshot(&request.NewWorkflowSnapshot)
+	simulation.LogEvents(events...)
+}
+
+func (s *contextImpl) logUpdateWorkflowExecutionEvents(request *persistence.UpdateWorkflowExecutionRequest) {
+	if !simulation.Enabled() {
+		return
+	}
+	events := s.getEventsFromWorkflowMutation(&request.UpdateWorkflowMutation)
+	simulation.LogEvents(events...)
+	events = s.getEventsFromWorkflowSnapshot(request.NewWorkflowSnapshot)
+	simulation.LogEvents(events...)
+}
+
+func (s *contextImpl) logConflictResolveWorkflowExecutionEvents(request *persistence.ConflictResolveWorkflowExecutionRequest) {
+	if !simulation.Enabled() {
+		return
+	}
+	events := s.getEventsFromWorkflowMutation(request.CurrentWorkflowMutation)
+	simulation.LogEvents(events...)
+	events = s.getEventsFromWorkflowSnapshot(&request.ResetWorkflowSnapshot)
+	simulation.LogEvents(events...)
+	events = s.getEventsFromWorkflowSnapshot(request.NewWorkflowSnapshot)
+	simulation.LogEvents(events...)
 }

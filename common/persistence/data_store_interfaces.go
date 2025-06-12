@@ -312,6 +312,7 @@ type (
 		NonRetriableErrors []string
 		BranchToken        []byte
 		CronSchedule       string
+		CronOverlapPolicy  types.CronOverlapPolicy
 		ExpirationInterval time.Duration
 		Memo               map[string][]byte
 		SearchAttributes   map[string][]byte
@@ -795,11 +796,17 @@ type (
 		AsyncWorkflowsConfig     *DataBlob
 	}
 
+	InternalDomainReplicationConfig struct {
+		Clusters             []*ClusterReplicationConfig
+		ActiveClusterName    string
+		ActiveClustersConfig *DataBlob
+	}
+
 	// InternalCreateDomainRequest is used to create the domain
 	InternalCreateDomainRequest struct {
 		Info              *DomainInfo
 		Config            *InternalDomainConfig
-		ReplicationConfig *DomainReplicationConfig
+		ReplicationConfig *InternalDomainReplicationConfig
 		IsGlobalDomain    bool
 		ConfigVersion     int64
 		FailoverVersion   int64
@@ -811,7 +818,7 @@ type (
 	InternalGetDomainResponse struct {
 		Info                        *DomainInfo
 		Config                      *InternalDomainConfig
-		ReplicationConfig           *DomainReplicationConfig
+		ReplicationConfig           *InternalDomainReplicationConfig
 		IsGlobalDomain              bool
 		ConfigVersion               int64
 		FailoverVersion             int64
@@ -826,7 +833,7 @@ type (
 	InternalUpdateDomainRequest struct {
 		Info                        *DomainInfo
 		Config                      *InternalDomainConfig
-		ReplicationConfig           *DomainReplicationConfig
+		ReplicationConfig           *InternalDomainReplicationConfig
 		ConfigVersion               int64
 		FailoverVersion             int64
 		FailoverNotificationVersion int64

@@ -63,34 +63,36 @@ type (
 
 	// DomainInfo blob in a serialization agnostic format
 	DomainInfo struct {
-		Name                        string // TODO: This field seems not to be required. We already store domain name in another column.
-		Description                 string
-		Owner                       string
-		Status                      int32
-		Retention                   time.Duration
-		EmitMetric                  bool
-		ArchivalBucket              string
-		ArchivalStatus              int16
-		ConfigVersion               int64
-		NotificationVersion         int64
-		FailoverNotificationVersion int64
-		FailoverVersion             int64
-		ActiveClusterName           string
-		Clusters                    []string
-		Data                        map[string]string
-		BadBinaries                 []byte
-		BadBinariesEncoding         string
-		HistoryArchivalStatus       int16
-		HistoryArchivalURI          string
-		VisibilityArchivalStatus    int16
-		VisibilityArchivalURI       string
-		FailoverEndTimestamp        *time.Time // TODO: There is logic checking if it's nil, should revisit this
-		PreviousFailoverVersion     int64
-		LastUpdatedTimestamp        time.Time
-		IsolationGroups             []byte
-		IsolationGroupsEncoding     string
-		AsyncWorkflowConfig         []byte
-		AsyncWorkflowConfigEncoding string
+		Name                         string // TODO: This field seems not to be required. We already store domain name in another column.
+		Description                  string
+		Owner                        string
+		Status                       int32
+		Retention                    time.Duration
+		EmitMetric                   bool
+		ArchivalBucket               string
+		ArchivalStatus               int16
+		ConfigVersion                int64
+		NotificationVersion          int64
+		FailoverNotificationVersion  int64
+		FailoverVersion              int64
+		ActiveClusterName            string
+		ActiveClustersConfig         []byte
+		ActiveClustersConfigEncoding string
+		Clusters                     []string
+		Data                         map[string]string
+		BadBinaries                  []byte
+		BadBinariesEncoding          string
+		HistoryArchivalStatus        int16
+		HistoryArchivalURI           string
+		VisibilityArchivalStatus     int16
+		VisibilityArchivalURI        string
+		FailoverEndTimestamp         *time.Time // TODO: There is logic checking if it's nil, should revisit this
+		PreviousFailoverVersion      int64
+		LastUpdatedTimestamp         time.Time
+		IsolationGroups              []byte
+		IsolationGroupsEncoding      string
+		AsyncWorkflowConfig          []byte
+		AsyncWorkflowConfigEncoding  string
 	}
 
 	// HistoryBranchRange blob in a serialization agnostic format
@@ -155,6 +157,7 @@ type (
 		RetryNonRetryableErrors            []string
 		HasRetryPolicy                     bool
 		CronSchedule                       string
+		CronOverlapPolicy                  types.CronOverlapPolicy
 		EventStoreVersion                  int32
 		EventBranchToken                   []byte
 		SignalCount                        int64
