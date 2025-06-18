@@ -147,6 +147,18 @@ type (
 		NumHistoryHosts        int
 		HistoryCountLimitError int
 		HistoryCountLimitWarn  int
+		SimulationConfig       HistorySimulationConfig
+	}
+
+	HistorySimulationConfig struct {
+		NumWorkflows int
+		// WorkflowDeletionJitterRange defines the duration in minutes for workflow close tasks jittering
+		// defaults to 0 to remove jittering
+		WorkflowDeletionJitterRange int
+		// EnableTransferQueueV2 enables queue v2 framework for transfer queue
+		EnableTransferQueueV2 bool
+		// EnableTimerQueueV2 enables queue v2 framework for timer queue
+		EnableTimerQueueV2 bool
 	}
 
 	MatchingConfig struct {

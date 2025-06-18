@@ -279,11 +279,11 @@ func (e *matchingEngineImpl) getTaskListManager(taskList *tasklist.Identifier, t
 	return mgr, nil
 }
 
-func (e *matchingEngineImpl) getTaskListByDomainLocked(domainID string) *types.GetTaskListsByDomainResponse {
+func (e *matchingEngineImpl) getTaskListByDomainLocked(domainID string, taskListKind types.TaskListKind) *types.GetTaskListsByDomainResponse {
 	decisionTaskListMap := make(map[string]*types.DescribeTaskListResponse)
 	activityTaskListMap := make(map[string]*types.DescribeTaskListResponse)
 	for tl, tlm := range e.taskLists {
-		if tl.GetDomainID() == domainID && tlm.GetTaskListKind() == types.TaskListKindNormal {
+		if tl.GetDomainID() == domainID && tlm.GetTaskListKind() == taskListKind {
 			if types.TaskListType(tl.GetType()) == types.TaskListTypeDecision {
 				decisionTaskListMap[tl.GetRoot()] = tlm.DescribeTaskList(false)
 			} else {
@@ -1045,7 +1045,7 @@ func (e *matchingEngineImpl) GetTaskListsByDomain(
 
 	e.taskListsLock.RLock()
 	defer e.taskListsLock.RUnlock()
-	return e.getTaskListByDomainLocked(domainID), nil
+	return e.getTaskListByDomainLocked(domainID, types.TaskListKindNormal), nil
 }
 
 func (e *matchingEngineImpl) UpdateTaskListPartitionConfig(
@@ -1440,21 +1440,28 @@ func (e *matchingEngineImpl) domainChangeCallback(nextDomains []*cache.DomainCac
 			continue
 		}
 
-		req := &types.GetTaskListsByDomainRequest{
-			Domain: domain.GetInfo().Name,
-		}
+		taskListNormal := types.TaskListKindNormal
 
-		resp, err := e.GetTaskListsByDomain(nil, req)
-		if err != nil {
-			continue
-		}
+		e.taskListsLock.RLock()
+		resp := e.getTaskListByDomainLocked(domain.GetInfo().ID, taskListNormal)
+		e.taskListsLock.RUnlock()
 
 		for taskListName := range resp.DecisionTaskListMap {
-			e.disconnectTaskListPollersAfterDomainFailover(taskListName, domain, persistence.TaskListTypeDecision)
+			e.disconnectTaskListPollersAfterDomainFailover(taskListName, domain, persistence.TaskListTypeDecision, taskListNormal)
 		}
 
 		for taskListName := range resp.ActivityTaskListMap {
-			e.disconnectTaskListPollersAfterDomainFailover(taskListName, domain, persistence.TaskListTypeActivity)
+			e.disconnectTaskListPollersAfterDomainFailover(taskListName, domain, persistence.TaskListTypeActivity, taskListNormal)
+		}
+
+		taskListSticky := types.TaskListKindSticky
+
+		e.taskListsLock.RLock()
+		resp = e.getTaskListByDomainLocked(domain.GetInfo().ID, taskListSticky)
+		e.taskListsLock.RUnlock()
+
+		for taskListName := range resp.DecisionTaskListMap {
+			e.disconnectTaskListPollersAfterDomainFailover(taskListName, domain, persistence.TaskListTypeDecision, taskListSticky)
 		}
 	}
 	e.failoverNotificationVersion = newFailoverNotificationVersion
@@ -1480,12 +1487,12 @@ func (e *matchingEngineImpl) unregisterDomainFailoverCallback() {
 	e.domainCache.UnregisterDomainChangeCallback(service.Matching)
 }
 
-func (e *matchingEngineImpl) disconnectTaskListPollersAfterDomainFailover(taskListName string, domain *cache.DomainCacheEntry, taskType int) {
+func (e *matchingEngineImpl) disconnectTaskListPollersAfterDomainFailover(taskListName string, domain *cache.DomainCacheEntry, taskType int, taskListKind types.TaskListKind) {
 	taskList, err := tasklist.NewIdentifier(domain.GetInfo().ID, taskListName, taskType)
 	if err != nil {
 		return
 	}
-	tlMgr, err := e.getTaskListManager(taskList, types.TaskListKindNormal.Ptr())
+	tlMgr, err := e.getTaskListManager(taskList, taskListKind.Ptr())
 	if err != nil {
 		e.logger.Error("Couldn't load tasklist manager", tag.Error(err))
 		return

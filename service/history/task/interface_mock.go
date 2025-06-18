@@ -199,6 +199,20 @@ func (mr *MockTaskMockRecorder) GetTaskID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskID", reflect.TypeOf((*MockTask)(nil).GetTaskID))
 }
 
+// GetTaskKey mocks base method.
+func (m *MockTask) GetTaskKey() persistence.HistoryTaskKey {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskKey")
+	ret0, _ := ret[0].(persistence.HistoryTaskKey)
+	return ret0
+}
+
+// GetTaskKey indicates an expected call of GetTaskKey.
+func (mr *MockTaskMockRecorder) GetTaskKey() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskKey", reflect.TypeOf((*MockTask)(nil).GetTaskKey))
+}
+
 // GetTaskType mocks base method.
 func (m *MockTask) GetTaskType() int {
 	m.ctrl.T.Helper()
@@ -605,6 +619,20 @@ func (m *MockCrossClusterTask) GetTaskID() int64 {
 func (mr *MockCrossClusterTaskMockRecorder) GetTaskID() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskID", reflect.TypeOf((*MockCrossClusterTask)(nil).GetTaskID))
+}
+
+// GetTaskKey mocks base method.
+func (m *MockCrossClusterTask) GetTaskKey() persistence.HistoryTaskKey {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskKey")
+	ret0, _ := ret[0].(persistence.HistoryTaskKey)
+	return ret0
+}
+
+// GetTaskKey indicates an expected call of GetTaskKey.
+func (mr *MockCrossClusterTaskMockRecorder) GetTaskKey() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskKey", reflect.TypeOf((*MockCrossClusterTask)(nil).GetTaskKey))
 }
 
 // GetTaskType mocks base method.
@@ -1116,6 +1144,18 @@ func (m *MockRedispatcher) Redispatch(targetSize int) {
 func (mr *MockRedispatcherMockRecorder) Redispatch(targetSize any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Redispatch", reflect.TypeOf((*MockRedispatcher)(nil).Redispatch), targetSize)
+}
+
+// RedispatchTask mocks base method.
+func (m *MockRedispatcher) RedispatchTask(arg0 Task, arg1 time.Time) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RedispatchTask", arg0, arg1)
+}
+
+// RedispatchTask indicates an expected call of RedispatchTask.
+func (mr *MockRedispatcherMockRecorder) RedispatchTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedispatchTask", reflect.TypeOf((*MockRedispatcher)(nil).RedispatchTask), arg0, arg1)
 }
 
 // Size mocks base method.

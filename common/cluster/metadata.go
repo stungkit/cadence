@@ -159,9 +159,13 @@ func (m Metadata) GetCurrentClusterName() string {
 }
 
 // GetCurrentRegion return the current region
-// TODO(active-active): Add tests
 func (m Metadata) GetCurrentRegion() string {
 	return m.currentRegion
+}
+
+// GetAllRegionInfo return all region info
+func (m Metadata) GetAllRegionInfo() map[string]config.RegionInformation {
+	return m.regions
 }
 
 // GetAllClusterInfo return all cluster info

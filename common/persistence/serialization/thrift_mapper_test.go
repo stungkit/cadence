@@ -30,6 +30,7 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/types"
 )
@@ -105,30 +106,32 @@ func TestShardInfo(t *testing.T) {
 
 func TestDomainInfo(t *testing.T) {
 	expected := &DomainInfo{
-		Name:                        "domain_name",
-		Description:                 "description",
-		Owner:                       "owner",
-		Status:                      int32(rand.Intn(1000)),
-		Retention:                   time.Duration(int64(rand.Intn(1000))),
-		EmitMetric:                  true,
-		ArchivalBucket:              "archival_bucket",
-		ArchivalStatus:              int16(rand.Intn(1000)),
-		ConfigVersion:               int64(rand.Intn(1000)),
-		NotificationVersion:         int64(rand.Intn(1000)),
-		FailoverNotificationVersion: int64(rand.Intn(1000)),
-		FailoverVersion:             int64(rand.Intn(1000)),
-		ActiveClusterName:           "ActiveClusterName",
-		Clusters:                    []string{"cluster_a", "cluster_b"},
-		Data:                        map[string]string{"key_1": "value_1", "key_2": "value_2"},
-		BadBinaries:                 []byte("BadBinaries"),
-		BadBinariesEncoding:         "BadBinariesEncoding",
-		HistoryArchivalStatus:       int16(rand.Intn(1000)),
-		HistoryArchivalURI:          "HistoryArchivalURI",
-		VisibilityArchivalStatus:    int16(rand.Intn(1000)),
-		VisibilityArchivalURI:       "VisibilityArchivalURI",
-		FailoverEndTimestamp:        common.TimePtr(time.Now()),
-		PreviousFailoverVersion:     int64(rand.Intn(1000)),
-		LastUpdatedTimestamp:        time.Now(),
+		Name:                         "domain_name",
+		Description:                  "description",
+		Owner:                        "owner",
+		Status:                       int32(rand.Intn(1000)),
+		Retention:                    time.Duration(int64(rand.Intn(1000))),
+		EmitMetric:                   true,
+		ArchivalBucket:               "archival_bucket",
+		ArchivalStatus:               int16(rand.Intn(1000)),
+		ConfigVersion:                int64(rand.Intn(1000)),
+		NotificationVersion:          int64(rand.Intn(1000)),
+		FailoverNotificationVersion:  int64(rand.Intn(1000)),
+		FailoverVersion:              int64(rand.Intn(1000)),
+		ActiveClusterName:            "ActiveClusterName",
+		ActiveClustersConfig:         []byte("activeClustersConfig"),
+		ActiveClustersConfigEncoding: "activeClustersConfigEncoding",
+		Clusters:                     []string{"cluster_a", "cluster_b"},
+		Data:                         map[string]string{"key_1": "value_1", "key_2": "value_2"},
+		BadBinaries:                  []byte("BadBinaries"),
+		BadBinariesEncoding:          "BadBinariesEncoding",
+		HistoryArchivalStatus:        int16(rand.Intn(1000)),
+		HistoryArchivalURI:           "HistoryArchivalURI",
+		VisibilityArchivalStatus:     int16(rand.Intn(1000)),
+		VisibilityArchivalURI:        "VisibilityArchivalURI",
+		FailoverEndTimestamp:         common.TimePtr(time.Now()),
+		PreviousFailoverVersion:      int64(rand.Intn(1000)),
+		LastUpdatedTimestamp:         time.Now(),
 	}
 	actual := domainInfoFromThrift(domainInfoToThrift(expected))
 	assert.Equal(t, expected.Name, actual.Name)
@@ -144,6 +147,8 @@ func TestDomainInfo(t *testing.T) {
 	assert.Equal(t, expected.FailoverNotificationVersion, actual.FailoverNotificationVersion)
 	assert.Equal(t, expected.ActiveClusterName, actual.ActiveClusterName)
 	assert.Equal(t, expected.Clusters, actual.Clusters)
+	assert.Equal(t, expected.ActiveClustersConfig, actual.ActiveClustersConfig)
+	assert.Equal(t, expected.ActiveClustersConfigEncoding, actual.ActiveClustersConfigEncoding)
 	assert.Equal(t, expected.Data, actual.Data)
 	assert.Equal(t, expected.BadBinaries, actual.BadBinaries)
 	assert.Equal(t, expected.BadBinariesEncoding, actual.BadBinariesEncoding)
@@ -249,6 +254,7 @@ func TestWorkflowExecutionInfo(t *testing.T) {
 		RetryNonRetryableErrors:            []string{"RetryNonRetryableErrors"},
 		HasRetryPolicy:                     true,
 		CronSchedule:                       "CronSchedule",
+		CronOverlapPolicy:                  types.CronOverlapPolicySkipped,
 		EventStoreVersion:                  int32(rand.Intn(1000)),
 		EventBranchToken:                   []byte("EventBranchToken"),
 		SignalCount:                        int64(rand.Intn(1000)),
@@ -329,6 +335,7 @@ func TestWorkflowExecutionInfo(t *testing.T) {
 	assert.Equal(t, expected.PartitionConfig, actual.PartitionConfig)
 	assert.Equal(t, expected.Checksum, actual.Checksum)
 	assert.Equal(t, expected.ChecksumEncoding, actual.ChecksumEncoding)
+	assert.Equal(t, expected.CronOverlapPolicy, actual.CronOverlapPolicy)
 	assert.Nil(t, workflowExecutionInfoFromThrift(nil))
 	assert.Nil(t, workflowExecutionInfoToThrift(nil))
 }
@@ -590,4 +597,18 @@ func TestReplicationTaskInfo(t *testing.T) {
 	assert.Equal(t, expected, actual)
 	assert.Nil(t, replicationTaskInfoFromThrift(nil))
 	assert.Nil(t, replicationTaskInfoToThrift(nil))
+}
+
+func TestCronOverlapPolicyFromThrift(t *testing.T) {
+	cases := []struct {
+		thrift *shared.CronOverlapPolicy
+		actual types.CronOverlapPolicy
+	}{
+		{nil, types.CronOverlapPolicySkipped},
+		{shared.CronOverlapPolicyBufferone.Ptr(), types.CronOverlapPolicyBufferOne},
+		{shared.CronOverlapPolicySkipped.Ptr(), types.CronOverlapPolicySkipped},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.actual, cronOverlapPolicyFromThrift(c.thrift))
+	}
 }

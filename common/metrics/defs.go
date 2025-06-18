@@ -1143,6 +1143,8 @@ const (
 	TaskPriorityAssignerScope
 	// TransferQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
 	TransferQueueProcessorScope
+	// TransferQueueProcessorV2Scope is the scope used by all metric emitted by transfer queue processor
+	TransferQueueProcessorV2Scope
 	// TransferActiveQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
 	TransferActiveQueueProcessorScope
 	// TransferStandbyQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
@@ -1197,6 +1199,8 @@ const (
 	TransferStandbyTaskApplyParentClosePolicyScope
 	// TimerQueueProcessorScope is the scope used by all metric emitted by timer queue processor
 	TimerQueueProcessorScope
+	// TimerQueueProcessorV2Scope is the scope used by all metric emitted by timer queue processor
+	TimerQueueProcessorV2Scope
 	// TimerActiveQueueProcessorScope is the scope used by all metric emitted by timer queue processor
 	TimerActiveQueueProcessorScope
 	// TimerQueueProcessorScope is the scope used by all metric emitted by timer queue processor
@@ -1329,6 +1333,8 @@ const (
 	HistoryWorkflowCacheScope
 	// HistoryFlushBufferedEventsScope is the scope used by history when flushing buffered events
 	HistoryFlushBufferedEventsScope
+	// HistoryTaskSchedulerMigrationScope is the scope used by history task scheduler migration
+	HistoryTaskSchedulerMigrationScope
 
 	NumHistoryScopes
 )
@@ -1940,6 +1946,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		HistoryRatelimitUpdateScope:                                     {operation: "RatelimitUpdate"},
 		TaskPriorityAssignerScope:                                       {operation: "TaskPriorityAssigner"},
 		TransferQueueProcessorScope:                                     {operation: "TransferQueueProcessor"},
+		TransferQueueProcessorV2Scope:                                   {operation: "TransferQueueProcessorV2"},
 		TransferActiveQueueProcessorScope:                               {operation: "TransferActiveQueueProcessor"},
 		TransferStandbyQueueProcessorScope:                              {operation: "TransferStandbyQueueProcessor"},
 		TransferActiveTaskActivityScope:                                 {operation: "TransferActiveTaskActivity"},
@@ -1967,6 +1974,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		TransferStandbyTaskRecordChildExecutionCompletedScope:           {operation: "TransferStandbyTaskRecordChildExecutionCompleted"},
 		TransferStandbyTaskApplyParentClosePolicyScope:                  {operation: "TransferStandbyTaskApplyParentClosePolicy"},
 		TimerQueueProcessorScope:                                        {operation: "TimerQueueProcessor"},
+		TimerQueueProcessorV2Scope:                                      {operation: "TimerQueueProcessorV2"},
 		TimerActiveQueueProcessorScope:                                  {operation: "TimerActiveQueueProcessor"},
 		TimerStandbyQueueProcessorScope:                                 {operation: "TimerStandbyQueueProcessor"},
 		TimerActiveTaskActivityTimeoutScope:                             {operation: "TimerActiveTaskActivityTimeout"},
@@ -2030,6 +2038,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		HistoryExecutionCacheScope:                                      {operation: "HistoryExecutionCache"},
 		HistoryWorkflowCacheScope:                                       {operation: "HistoryWorkflowCache"},
 		HistoryFlushBufferedEventsScope:                                 {operation: "HistoryFlushBufferedEvents"},
+		HistoryTaskSchedulerMigrationScope:                              {operation: "HistoryTaskSchedulerMigration"},
 	},
 	// Matching Scope Names
 	Matching: {
@@ -2260,6 +2269,7 @@ const (
 
 	// common metrics that are emitted per task list
 	CadenceRequestsPerTaskList
+	CadenceRequestsPerTaskListWithoutRollup
 	CadenceFailuresPerTaskList
 	CadenceLatencyPerTaskList
 	CadenceErrBadRequestPerTaskListCounter
@@ -2355,6 +2365,8 @@ const (
 	TaskProcessingLatency
 	TaskQueueLatency
 	ScheduleToStartHistoryQueueLatencyPerTaskList
+	TaskRequestsOldScheduler
+	TaskRequestsNewScheduler
 
 	TaskRequestsPerDomain
 	TaskLatencyPerDomain
@@ -2973,6 +2985,9 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		CadenceRequestsPerTaskList: {
 			metricName: "cadence_requests_per_tl", metricRollupName: "cadence_requests", metricType: Counter,
 		},
+		CadenceRequestsPerTaskListWithoutRollup: {
+			metricName: "cadence_requests_per_tl", metricType: Counter,
+		},
 		CadenceFailuresPerTaskList: {
 			metricName: "cadence_errors_per_tl", metricRollupName: "cadence_errors", metricType: Counter,
 		},
@@ -3099,6 +3114,8 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		TaskProcessingLatency:    {metricName: "task_latency_processing", metricType: Timer},
 		TaskQueueLatency:         {metricName: "task_latency_queue", metricType: Timer},
 		ScheduleToStartHistoryQueueLatencyPerTaskList: {metricName: "schedule_to_start_history_queue_latency_per_tl", metricType: Timer},
+		TaskRequestsOldScheduler:                      {metricName: "task_requests_old_scheduler", metricType: Counter},
+		TaskRequestsNewScheduler:                      {metricName: "task_requests_new_scheduler", metricType: Counter},
 
 		// per domain task metrics
 
@@ -3118,7 +3135,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		TaskProcessingLatencyPerDomain:           {metricName: "task_latency_processing_per_domain", metricRollupName: "task_latency_processing", metricType: Timer},
 		TaskQueueLatencyPerDomain:                {metricName: "task_latency_queue_per_domain", metricRollupName: "task_latency_queue", metricType: Timer},
 		TransferTaskMissingEventCounterPerDomain: {metricName: "transfer_task_missing_event_counter_per_domain", metricRollupName: "transfer_task_missing_event_counter", metricType: Counter},
-		ReplicationTasksAppliedPerDomain:         {metricName: "replication_tasks_applied_per_domain", metricRollupName: "replication_tasks_applied", metricType: Counter},
+		ReplicationTasksAppliedPerDomain:         {metricName: "replication_tasks_applied_per_domain", metricType: Counter},
 		WorkflowTerminateCounterPerDomain:        {metricName: "workflow_terminate_counter_per_domain", metricRollupName: "workflow_terminate_counter", metricType: Counter},
 		TaskSchedulerAllowedCounterPerDomain:     {metricName: "task_scheduler_allowed_counter_per_domain", metricRollupName: "task_scheduler_allowed_counter", metricType: Counter},
 		TaskSchedulerThrottledCounterPerDomain:   {metricName: "task_scheduler_throttled_counter_per_domain", metricRollupName: "task_scheduler_throttled_counter", metricType: Counter},

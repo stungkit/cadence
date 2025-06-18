@@ -103,7 +103,9 @@ var (
 	ComponentDecisionHandler                  = component("decision-handler")
 	ComponentEventsCache                      = component("events-cache")
 	ComponentTransferQueue                    = component("transfer-queue-processor")
+	ComponentTransferQueueV2                  = component("transfer-queue-processor-v2")
 	ComponentTimerQueue                       = component("timer-queue-processor")
+	ComponentTimerQueueV2                     = component("timer-queue-processor-v2")
 	ComponentTimerBuilder                     = component("timer-builder")
 	ComponentReplicatorQueue                  = component("replicator-queue-processor")
 	ComponentShardController                  = component("shard-controller")
@@ -121,6 +123,7 @@ var (
 	ComponentIndexer                          = component("indexer")
 	ComponentIndexerProcessor                 = component("indexer-processor")
 	ComponentIndexerESProcessor               = component("indexer-es-processor")
+	ComponentESVisibilityClient               = component("visibility-client") // used for client-internal logs, e.g. request errors
 	ComponentESVisibilityManager              = component("es-visibility-manager")
 	ComponentArchiver                         = component("archiver")
 	ComponentBatcher                          = component("batcher")
