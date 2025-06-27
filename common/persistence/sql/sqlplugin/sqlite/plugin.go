@@ -23,6 +23,7 @@
 package sqlite
 
 import (
+	"fmt"
 	"os"
 	"path"
 
@@ -43,7 +44,8 @@ const (
 
 // SQLite plugin provides an sql persistence storage implementation for sqlite database
 // Mostly the implementation reuses the mysql implementation
-// The plugin supports only in-memory sqlite database for now
+// If DatabaseName is not provided, then sqlite will use in-memory database,
+// otherwise it will use the file as the database
 type plugin struct{}
 
 var _ sqlplugin.Plugin = (*plugin)(nil)
@@ -68,16 +70,26 @@ func (p *plugin) createDB(cfg *config.SQL) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewDB(conns, nil, sqlplugin.DbShardUndefined, cfg.NumShards, newConverter())
+	return NewDB(conns, nil, sqlplugin.DbShardUndefined, cfg.NumShards, newConverter(), cfg.DatabaseName)
 }
 
 // createSingleDBConn creates a single database connection for sqlite
 // Plugin respects the following arguments MaxConns, MaxIdleConns, MaxConnLifetime
 // Other arguments are used and described in buildDSN function
 func (p *plugin) createSingleDBConn(cfg *config.SQL) (*sqlx.DB, error) {
+	if cfg.DatabaseName == "" {
+		return p.createDBConn(cfg)
+	}
+
+	return createSharedDBConn(cfg.DatabaseName, func() (*sqlx.DB, error) {
+		return p.createDBConn(cfg)
+	})
+}
+
+func (p *plugin) createDBConn(cfg *config.SQL) (*sqlx.DB, error) {
 	db, err := sqlx.Connect("sqlite3", buildDSN(cfg))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create database connection: %v", err)
 	}
 
 	if cfg.MaxConns > 0 {

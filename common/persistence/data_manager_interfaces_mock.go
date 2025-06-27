@@ -113,6 +113,20 @@ func (mr *MockTaskMockRecorder) GetTaskID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskID", reflect.TypeOf((*MockTask)(nil).GetTaskID))
 }
 
+// GetTaskKey mocks base method.
+func (m *MockTask) GetTaskKey() HistoryTaskKey {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskKey")
+	ret0, _ := ret[0].(HistoryTaskKey)
+	return ret0
+}
+
+// GetTaskKey indicates an expected call of GetTaskKey.
+func (mr *MockTaskMockRecorder) GetTaskKey() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskKey", reflect.TypeOf((*MockTask)(nil).GetTaskKey))
+}
+
 // GetTaskType mocks base method.
 func (m *MockTask) GetTaskType() int {
 	m.ctrl.T.Helper()
@@ -477,6 +491,21 @@ func (m *MockExecutionManager) DeleteWorkflowExecution(ctx context.Context, requ
 func (mr *MockExecutionManagerMockRecorder) DeleteWorkflowExecution(ctx, request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWorkflowExecution", reflect.TypeOf((*MockExecutionManager)(nil).DeleteWorkflowExecution), ctx, request)
+}
+
+// GetActiveClusterSelectionPolicy mocks base method.
+func (m *MockExecutionManager) GetActiveClusterSelectionPolicy(ctx context.Context, domainID, wfID, rID string) (*types.ActiveClusterSelectionPolicy, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveClusterSelectionPolicy", ctx, domainID, wfID, rID)
+	ret0, _ := ret[0].(*types.ActiveClusterSelectionPolicy)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveClusterSelectionPolicy indicates an expected call of GetActiveClusterSelectionPolicy.
+func (mr *MockExecutionManagerMockRecorder) GetActiveClusterSelectionPolicy(ctx, domainID, wfID, rID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveClusterSelectionPolicy", reflect.TypeOf((*MockExecutionManager)(nil).GetActiveClusterSelectionPolicy), ctx, domainID, wfID, rID)
 }
 
 // GetCurrentExecution mocks base method.

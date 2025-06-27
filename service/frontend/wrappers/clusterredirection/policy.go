@@ -273,6 +273,7 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) withRedirect(
 ) error {
 	targetDC, enableDomainNotActiveForwarding := policy.getTargetClusterAndIsDomainNotActiveAutoForwarding(ctx, domainEntry, apiName, requestedConsistencyLevel)
 
+	policy.logger.Debugf("Calling API %q on target cluster:%q for domain:%q", apiName, targetDC, domainEntry.GetInfo().Name)
 	err := call(targetDC)
 
 	targetDC, ok := policy.isDomainNotActiveError(err)
@@ -311,8 +312,7 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) getTargetClusterAndI
 	isActiveActive := domainEntry.GetReplicationConfig().IsActiveActive()
 	policy.logger.Debugf("Domain %v is active-active: %v", domainEntry.GetInfo().Name, isActiveActive)
 	if isActiveActive {
-		// TODO(active-active):
-		// - Update generated API code to pass workflow id/run id to this callback and lookup active cluster
+		// TODO(active-active): Update generated API code to pass workflow id/run id to this callback and lookup active cluster
 		policy.logger.Debug("Handling active-active domain call in the receiving cluster for now", tag.WorkflowDomainName(domainEntry.GetInfo().Name))
 		return policy.currentClusterName, true
 	}
