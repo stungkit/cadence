@@ -201,7 +201,7 @@ func (s *timerQueueProcessorBaseSuite) TestGetTimerTasks_NoMore() {
 }
 
 func (s *timerQueueProcessorBaseSuite) TestReadLookAheadTask() {
-	shardMaxReadLevel := s.mockShard.UpdateTimerMaxReadLevel(s.clusterName)
+	shardMaxReadLevel := s.mockShard.UpdateIfNeededAndGetQueueMaxReadLevel(persistence.HistoryTaskCategoryTimer, s.clusterName).GetScheduledTime()
 	readLevel := newTimerTaskKey(shardMaxReadLevel, 0)
 	maxReadLevel := newTimerTaskKey(shardMaxReadLevel.Add(10*time.Second), 0)
 
@@ -495,7 +495,7 @@ func (s *timerQueueProcessorBaseSuite) TestReadAndFilterTasks_LookAheadFailed_No
 
 	mockExecutionMgr := s.mockShard.Resource.ExecutionMgr
 	mockExecutionMgr.On("GetHistoryTasks", mock.Anything, request).Return(response, nil).Once()
-	mockExecutionMgr.On("GetHistoryTasks", mock.Anything, lookAheadRequest).Return(nil, errors.New("some random error")).Times(s.mockShard.GetConfig().TimerProcessorGetFailureRetryCount())
+	mockExecutionMgr.On("GetHistoryTasks", mock.Anything, lookAheadRequest).Return(nil, errors.New("some random error")).Times(0)
 
 	timerQueueProcessBase, done := s.newTestTimerQueueProcessorBase(nil, nil, nil, nil, nil)
 	defer done()

@@ -585,7 +585,7 @@ func TestPickBetween(t *testing.T) {
 				},
 			},
 			from:    []int{1, 3},
-			allowed: []int{1},
+			allowed: []int{1, 3},
 		},
 	}
 	for _, tc := range cases {
@@ -602,7 +602,7 @@ func TestPickBetween(t *testing.T) {
 				Pin:             false,
 				MaxCount:        3000,
 				ActivelyEvict:   false,
-				MetricsScope:    metrics.NoopScope(metrics.Frontend),
+				MetricsScope:    metrics.NoopScope,
 				Logger:          testlogger.New(t),
 			})
 			mockPartitionConfigProvider := NewMockPartitionConfigProvider(ctrl)

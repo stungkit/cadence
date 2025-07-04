@@ -78,6 +78,7 @@ func (e *mutableStateBuilder) addWorkflowExecutionStartedEventForContinueAsNew(
 		Memo:                                attributes.Memo,
 		SearchAttributes:                    attributes.SearchAttributes,
 		JitterStartSeconds:                  attributes.JitterStartSeconds,
+		ActiveClusterSelectionPolicy:        attributes.ActiveClusterSelectionPolicy,
 	}
 
 	req := &types.HistoryStartWorkflowExecutionRequest{
@@ -192,6 +193,7 @@ func (e *mutableStateBuilder) ReplicateWorkflowExecutionStartedEvent(
 		requestID = event.GetRequestID()
 	}
 	e.executionInfo.CreateRequestID = requestID
+
 	e.insertWorkflowRequest(persistence.WorkflowRequest{
 		RequestID:   requestID,
 		Version:     startEvent.Version,
@@ -268,6 +270,7 @@ func (e *mutableStateBuilder) ReplicateWorkflowExecutionStartedEvent(
 		e.executionInfo.SearchAttributes = event.SearchAttributes.GetIndexedFields()
 	}
 	e.executionInfo.PartitionConfig = event.PartitionConfig
+	e.executionInfo.ActiveClusterSelectionPolicy = event.ActiveClusterSelectionPolicy
 
 	e.writeEventToCache(startEvent)
 

@@ -296,7 +296,7 @@ func Test_IsActiveIn(t *testing.T) {
 		isGlobalDomain   bool
 		currentCluster   string
 		activeCluster    string
-		activeClusters   *persistence.ActiveClustersConfig
+		activeClusters   *types.ActiveClusters
 		failoverDeadline *int64
 		expectIsActive   bool
 		expectedErr      error
@@ -330,20 +330,19 @@ func Test_IsActiveIn(t *testing.T) {
 			currentCluster: "A",
 			activeCluster:  "B",
 			expectedErr: &types.DomainNotActiveError{
-				Message:        "Domain: test-domain is active in cluster(s): [B], while current cluster A is a standby cluster.",
+				Message:        "Domain: test-domain is active in cluster(s): [B] (and potentially more), while current cluster A is a standby cluster.",
 				DomainName:     "test-domain",
 				CurrentCluster: "A",
 				ActiveCluster:  "B",
-				// TODO(active-active): After ActiveClusters field is introduced, uncomment following line
-				// ActiveClusters: []string{"B"},
+				ActiveClusters: []string{"B"},
 			},
 		},
 		{
 			msg:            "active-active domain on active cluster",
 			isGlobalDomain: true,
 			currentCluster: "A",
-			activeClusters: &persistence.ActiveClustersConfig{
-				RegionToClusterMap: map[string]persistence.ActiveClusterConfig{
+			activeClusters: &types.ActiveClusters{
+				ActiveClustersByRegion: map[string]types.ActiveClusterInfo{
 					"region0": {ActiveClusterName: "A"},
 					"region1": {ActiveClusterName: "B"},
 				},
@@ -354,19 +353,18 @@ func Test_IsActiveIn(t *testing.T) {
 			msg:            "active-active domain on passive cluster",
 			isGlobalDomain: true,
 			currentCluster: "C",
-			activeClusters: &persistence.ActiveClustersConfig{
-				RegionToClusterMap: map[string]persistence.ActiveClusterConfig{
+			activeClusters: &types.ActiveClusters{
+				ActiveClustersByRegion: map[string]types.ActiveClusterInfo{
 					"region0": {ActiveClusterName: "A"},
 					"region1": {ActiveClusterName: "B"},
 				},
 			},
 			expectedErr: &types.DomainNotActiveError{
-				Message:        "Domain: test-domain is active in cluster(s): [A B], while current cluster C is a standby cluster.",
+				Message:        "Domain: test-domain is active in cluster(s): [A B] (and potentially more), while current cluster C is a standby cluster.",
 				DomainName:     "test-domain",
 				CurrentCluster: "C",
 				ActiveCluster:  "",
-				// TODO(active-active): After ActiveClusters field is introduced, uncomment following line
-				// ActiveClusters: []string{"A", "B"},
+				ActiveClusters: []string{"A", "B"},
 			},
 		},
 	}
@@ -1175,12 +1173,11 @@ func Test_GetActiveDomainByID(t *testing.T) {
 			domainID:     passiveDomainUUID,
 			expectDomain: passiveDomain,
 			expectedErr: &types.DomainNotActiveError{
-				Message:        "Domain: passive is active in cluster(s): [B], while current cluster A is a standby cluster.",
+				Message:        "Domain: passive is active in cluster(s): [B] (and potentially more), while current cluster A is a standby cluster.",
 				DomainName:     "passive",
 				CurrentCluster: "A",
 				ActiveCluster:  "B",
-				// TODO(active-active): After ActiveClusters field is introduced, uncomment following line
-				// ActiveClusters: []string{"B"},
+				ActiveClusters: []string{"B"},
 			},
 		},
 	}

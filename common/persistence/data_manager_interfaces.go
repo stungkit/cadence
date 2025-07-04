@@ -66,6 +66,8 @@ import (
 	"github.com/uber/cadence/common/types"
 )
 
+const DBTimestampMinPrecision = time.Millisecond
+
 // Domain status
 const (
 	DomainStatusRegistered = iota
@@ -172,6 +174,7 @@ const (
 const (
 	TaskListKindNormal = iota
 	TaskListKindSticky
+	TaskListKindEphemeral
 )
 
 // HistoryTaskCategory represents various categories of history tasks
@@ -181,15 +184,15 @@ type HistoryTaskCategory struct {
 	categoryName string
 }
 
-func (c *HistoryTaskCategory) Type() int {
+func (c HistoryTaskCategory) Type() int {
 	return c.categoryType
 }
 
-func (c *HistoryTaskCategory) ID() int {
+func (c HistoryTaskCategory) ID() int {
 	return c.categoryID
 }
 
-func (c *HistoryTaskCategory) Name() string {
+func (c HistoryTaskCategory) Name() string {
 	return c.categoryName
 }
 
@@ -411,7 +414,10 @@ type (
 		// Cron
 		CronSchedule      string
 		IsCron            bool
+		CronOverlapPolicy types.CronOverlapPolicy
 		ExpirationSeconds int32 // TODO: is this field useful?
+
+		ActiveClusterSelectionPolicy *types.ActiveClusterSelectionPolicy
 	}
 
 	// ExecutionStats is the statistics about workflow execution
@@ -1154,25 +1160,11 @@ type (
 
 		// ActiveClusterName is the name of the cluster that the domain is active in.
 		// Applicable for active-passive domains.
-		// If this is set, ActiveClusters is ignored.
 		ActiveClusterName string
 
-		// ActiveClustersConfig is only applicable for active-active domains.
+		// ActiveClusters is only applicable for active-active domains.
 		// If this is set, ActiveClusterName is ignored.
-		ActiveClusters *ActiveClustersConfig
-	}
-
-	// ActiveClustersConfig describes the active-active domain configuration.
-	ActiveClustersConfig struct {
-		RegionToClusterMap map[string]ActiveClusterConfig
-	}
-
-	// ActiveClusterConfig describes the active cluster configuration for active-active domains.
-	ActiveClusterConfig struct {
-		// ActiveClusterName is the name of the active cluster for the region.
-		ActiveClusterName string
-		// FailoverVersion is the failover version of the active cluster.
-		FailoverVersion int64
+		ActiveClusters *types.ActiveClusters
 	}
 
 	// ClusterReplicationConfig describes the cross DC cluster replication configuration
@@ -1557,6 +1549,8 @@ type (
 		// Scan operations
 		ListConcreteExecutions(ctx context.Context, request *ListConcreteExecutionsRequest) (*ListConcreteExecutionsResponse, error)
 		ListCurrentExecutions(ctx context.Context, request *ListCurrentExecutionsRequest) (*ListCurrentExecutionsResponse, error)
+
+		GetActiveClusterSelectionPolicy(ctx context.Context, domainID, wfID, rID string) (*types.ActiveClusterSelectionPolicy, error)
 	}
 
 	// ExecutionManagerFactory creates an instance of ExecutionManager for a given shard
@@ -2206,6 +2200,19 @@ func HasMoreRowsToDelete(rowsDeleted, batchSize int) bool {
 	return true
 }
 
+func TaskListKindHasTTL(taskListKind int) bool {
+	switch taskListKind {
+	case TaskListKindEphemeral:
+		return true
+	case TaskListKindSticky:
+		return true
+	case TaskListKindNormal:
+		return false
+	default:
+		return false
+	}
+}
+
 func (e *WorkflowExecutionInfo) CopyMemo() map[string][]byte {
 	if e.Memo == nil {
 		return nil
@@ -2278,30 +2285,5 @@ func (p *TaskListPartition) ToInternalType() *types.TaskListPartition {
 
 // TODO(active-active): Update unit tests of all components that use this function to cover active-active case
 func (d *DomainReplicationConfig) IsActiveActive() bool {
-	return d != nil && d.ActiveClusters != nil
-}
-
-func (c *ActiveClustersConfig) DeepCopy() *ActiveClustersConfig {
-	if c == nil {
-		return nil
-	}
-
-	if c.RegionToClusterMap == nil {
-		return &ActiveClustersConfig{}
-	}
-
-	regionToClusterMap := make(map[string]ActiveClusterConfig, len(c.RegionToClusterMap))
-	for k, v := range c.RegionToClusterMap {
-		regionToClusterMap[k] = v.DeepCopy()
-	}
-	return &ActiveClustersConfig{
-		RegionToClusterMap: regionToClusterMap,
-	}
-}
-
-func (c ActiveClusterConfig) DeepCopy() ActiveClusterConfig {
-	return ActiveClusterConfig{
-		ActiveClusterName: c.ActiveClusterName,
-		FailoverVersion:   c.FailoverVersion,
-	}
+	return d != nil && d.ActiveClusters != nil && len(d.ActiveClusters.ActiveClustersByRegion) > 0
 }

@@ -115,7 +115,7 @@ func NewHistoryTask(
 		state:              ctask.TaskStatePending,
 		priority:           noPriority,
 		queueType:          queueType,
-		scope:              metrics.NoopScope(metrics.History),
+		scope:              metrics.NoopScope,
 		logger:             logger,
 		eventLogger:        eventLogger,
 		attempt:            0,
@@ -130,6 +130,10 @@ func NewHistoryTask(
 }
 
 func (t *taskImpl) Execute() error {
+	if t.State() != ctask.TaskStatePending {
+		return nil
+	}
+
 	var err error
 	t.shouldProcessTask, err = t.taskFilter(t.Task)
 	if err != nil {
@@ -152,6 +156,8 @@ func (t *taskImpl) Execute() error {
 }
 
 func (t *taskImpl) HandleErr(err error) (retErr error) {
+	logger := t.logger.Helper()
+
 	defer func() {
 		if retErr != nil {
 			logEvent(t.eventLogger, "Failed to handle error", retErr)
@@ -162,7 +168,7 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 			t.attempt++
 			if t.attempt > t.criticalRetryCount() {
 				t.scope.RecordTimer(metrics.TaskAttemptTimerPerDomain, time.Duration(t.attempt))
-				t.logger.Error("Critical error processing task, retrying.",
+				logger.Error("Critical error processing task, retrying.",
 					tag.Error(err),
 					tag.OperationCritical,
 					tag.TaskType(t.GetTaskType()),
@@ -188,7 +194,7 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 		err == execution.ErrMissingWorkflowStartEvent &&
 		t.shard.GetConfig().EnableDropStuckTaskByDomainID(t.GetDomainID()) { // use domainID here to avoid accessing domainCache
 		t.scope.IncCounter(metrics.TransferTaskMissingEventCounterPerDomain)
-		t.logger.Error("Drop close execution transfer task due to corrupted workflow history", tag.Error(err), tag.LifeCycleProcessingFailed)
+		logger.Error("Drop close execution transfer task due to corrupted workflow history", tag.Error(err), tag.LifeCycleProcessingFailed)
 		return nil
 	}
 
@@ -256,22 +262,27 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 	t.scope.IncCounter(metrics.TaskFailuresPerDomain)
 
 	if _, ok := err.(*persistence.CurrentWorkflowConditionFailedError); ok {
-		t.logger.Error("More than 2 workflow are running.", tag.Error(err), tag.LifeCycleProcessingFailed)
+		logger.Error("More than 2 workflow are running.", tag.Error(err), tag.LifeCycleProcessingFailed)
 		return nil
 	}
 
-	if t.GetAttempt() > stickyTaskMaxRetryCount && common.IsStickyTaskConditionError(err) {
+	attempt := t.GetAttempt()
+	if attempt > stickyTaskMaxRetryCount && common.IsStickyTaskConditionError(err) {
 		// sticky task could end up into endless loop in rare cases and
 		// cause worker to keep getting decision timeout unless restart.
 		// return nil here to break the endless loop
 		return nil
 	}
 
-	t.logger.Error("Fail to process task", tag.Error(err), tag.LifeCycleProcessingFailed)
+	logger.Error("Fail to process task", tag.Error(err), tag.LifeCycleProcessingFailed, tag.AttemptCount(attempt))
 	return err
 }
 
 func (t *taskImpl) RetryErr(err error) bool {
+	if t.State() != ctask.TaskStatePending {
+		return false
+	}
+
 	var errShardClosed *shard.ErrShardClosed
 	if errors.As(err, &errShardClosed) || err == errWorkflowBusy || isRedispatchErr(err) || err == ErrTaskPendingActive || common.IsContextTimeoutError(err) {
 		return false
@@ -285,6 +296,10 @@ func (t *taskImpl) Ack() {
 
 	t.Lock()
 	defer t.Unlock()
+
+	if t.state != ctask.TaskStatePending {
+		return
+	}
 
 	t.state = ctask.TaskStateAcked
 	if t.shouldProcessTask {
@@ -301,11 +316,11 @@ func (t *taskImpl) Ack() {
 }
 
 func (t *taskImpl) Nack() {
-	logEvent(t.eventLogger, "Nacked task")
+	if t.State() != ctask.TaskStatePending {
+		return
+	}
 
-	t.Lock()
-	t.state = ctask.TaskStateNacked
-	t.Unlock()
+	logEvent(t.eventLogger, "Nacked task")
 
 	if t.shouldResubmitOnNack() {
 		if submitted, _ := t.taskProcessor.TrySubmit(t); submitted {
@@ -314,6 +329,15 @@ func (t *taskImpl) Nack() {
 	}
 
 	t.redispatchFn(t)
+}
+
+func (t *taskImpl) Cancel() {
+	t.Lock()
+	defer t.Unlock()
+
+	if t.state == ctask.TaskStatePending {
+		t.state = ctask.TaskStateCanceled
+	}
 }
 
 func (t *taskImpl) State() ctask.State {

@@ -544,17 +544,17 @@ func (mr *MockDBMockRecorder) InsertVisibility(ctx, ttlSeconds, row any) *gomock
 }
 
 // InsertWorkflowExecutionWithTasks mocks base method.
-func (m *MockDB) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, shardCondition *ShardCondition) error {
+func (m *MockDB) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, activeClusterSelectionPolicyRow *ActiveClusterSelectionPolicyRow, shardCondition *ShardCondition) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InsertWorkflowExecutionWithTasks indicates an expected call of InsertWorkflowExecutionWithTasks.
-func (mr *MockDBMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition any) *gomock.Call {
+func (mr *MockDBMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MockDB)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MockDB)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 }
 
 // IsDBUnavailableError mocks base method.
@@ -726,6 +726,21 @@ func (m *MockDB) RangeDeleteTransferTasks(ctx context.Context, shardID int, incl
 func (mr *MockDBMockRecorder) RangeDeleteTransferTasks(ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RangeDeleteTransferTasks", reflect.TypeOf((*MockDB)(nil).RangeDeleteTransferTasks), ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID)
+}
+
+// SelectActiveClusterSelectionPolicy mocks base method.
+func (m *MockDB) SelectActiveClusterSelectionPolicy(ctx context.Context, shardID int, domainID, wfID, rID string) (*ActiveClusterSelectionPolicyRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SelectActiveClusterSelectionPolicy", ctx, shardID, domainID, wfID, rID)
+	ret0, _ := ret[0].(*ActiveClusterSelectionPolicyRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SelectActiveClusterSelectionPolicy indicates an expected call of SelectActiveClusterSelectionPolicy.
+func (mr *MockDBMockRecorder) SelectActiveClusterSelectionPolicy(ctx, shardID, domainID, wfID, rID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectActiveClusterSelectionPolicy", reflect.TypeOf((*MockDB)(nil).SelectActiveClusterSelectionPolicy), ctx, shardID, domainID, wfID, rID)
 }
 
 // SelectAllCurrentWorkflows mocks base method.
@@ -1630,17 +1645,17 @@ func (mr *MocktableCRUDMockRecorder) InsertVisibility(ctx, ttlSeconds, row any) 
 }
 
 // InsertWorkflowExecutionWithTasks mocks base method.
-func (m *MocktableCRUD) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, shardCondition *ShardCondition) error {
+func (m *MocktableCRUD) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, activeClusterSelectionPolicyRow *ActiveClusterSelectionPolicyRow, shardCondition *ShardCondition) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InsertWorkflowExecutionWithTasks indicates an expected call of InsertWorkflowExecutionWithTasks.
-func (mr *MocktableCRUDMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition any) *gomock.Call {
+func (mr *MocktableCRUDMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MocktableCRUD)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MocktableCRUD)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 }
 
 // IsWorkflowExecutionExists mocks base method.
@@ -1742,6 +1757,21 @@ func (m *MocktableCRUD) RangeDeleteTransferTasks(ctx context.Context, shardID in
 func (mr *MocktableCRUDMockRecorder) RangeDeleteTransferTasks(ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RangeDeleteTransferTasks", reflect.TypeOf((*MocktableCRUD)(nil).RangeDeleteTransferTasks), ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID)
+}
+
+// SelectActiveClusterSelectionPolicy mocks base method.
+func (m *MocktableCRUD) SelectActiveClusterSelectionPolicy(ctx context.Context, shardID int, domainID, wfID, rID string) (*ActiveClusterSelectionPolicyRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SelectActiveClusterSelectionPolicy", ctx, shardID, domainID, wfID, rID)
+	ret0, _ := ret[0].(*ActiveClusterSelectionPolicyRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SelectActiveClusterSelectionPolicy indicates an expected call of SelectActiveClusterSelectionPolicy.
+func (mr *MocktableCRUDMockRecorder) SelectActiveClusterSelectionPolicy(ctx, shardID, domainID, wfID, rID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectActiveClusterSelectionPolicy", reflect.TypeOf((*MocktableCRUD)(nil).SelectActiveClusterSelectionPolicy), ctx, shardID, domainID, wfID, rID)
 }
 
 // SelectAllCurrentWorkflows mocks base method.
@@ -3213,17 +3243,17 @@ func (mr *MockWorkflowCRUDMockRecorder) InsertReplicationTask(ctx, tasks, condit
 }
 
 // InsertWorkflowExecutionWithTasks mocks base method.
-func (m *MockWorkflowCRUD) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, shardCondition *ShardCondition) error {
+func (m *MockWorkflowCRUD) InsertWorkflowExecutionWithTasks(ctx context.Context, requests *WorkflowRequestsWriteRequest, currentWorkflowRequest *CurrentWorkflowWriteRequest, execution *WorkflowExecutionRequest, tasksByCategory map[persistence.HistoryTaskCategory][]*HistoryMigrationTask, activeClusterSelectionPolicyRow *ActiveClusterSelectionPolicyRow, shardCondition *ShardCondition) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	ret := m.ctrl.Call(m, "InsertWorkflowExecutionWithTasks", ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InsertWorkflowExecutionWithTasks indicates an expected call of InsertWorkflowExecutionWithTasks.
-func (mr *MockWorkflowCRUDMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition any) *gomock.Call {
+func (mr *MockWorkflowCRUDMockRecorder) InsertWorkflowExecutionWithTasks(ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MockWorkflowCRUD)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, shardCondition)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertWorkflowExecutionWithTasks", reflect.TypeOf((*MockWorkflowCRUD)(nil).InsertWorkflowExecutionWithTasks), ctx, requests, currentWorkflowRequest, execution, tasksByCategory, activeClusterSelectionPolicyRow, shardCondition)
 }
 
 // IsWorkflowExecutionExists mocks base method.
@@ -3295,6 +3325,21 @@ func (m *MockWorkflowCRUD) RangeDeleteTransferTasks(ctx context.Context, shardID
 func (mr *MockWorkflowCRUDMockRecorder) RangeDeleteTransferTasks(ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RangeDeleteTransferTasks", reflect.TypeOf((*MockWorkflowCRUD)(nil).RangeDeleteTransferTasks), ctx, shardID, inclusiveBeginTaskID, exclusiveEndTaskID)
+}
+
+// SelectActiveClusterSelectionPolicy mocks base method.
+func (m *MockWorkflowCRUD) SelectActiveClusterSelectionPolicy(ctx context.Context, shardID int, domainID, wfID, rID string) (*ActiveClusterSelectionPolicyRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SelectActiveClusterSelectionPolicy", ctx, shardID, domainID, wfID, rID)
+	ret0, _ := ret[0].(*ActiveClusterSelectionPolicyRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SelectActiveClusterSelectionPolicy indicates an expected call of SelectActiveClusterSelectionPolicy.
+func (mr *MockWorkflowCRUDMockRecorder) SelectActiveClusterSelectionPolicy(ctx, shardID, domainID, wfID, rID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectActiveClusterSelectionPolicy", reflect.TypeOf((*MockWorkflowCRUD)(nil).SelectActiveClusterSelectionPolicy), ctx, shardID, domainID, wfID, rID)
 }
 
 // SelectAllCurrentWorkflows mocks base method.
