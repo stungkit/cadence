@@ -126,6 +126,9 @@ type (
 		// Scan related methods
 		ListConcreteExecutions(ctx context.Context, request *ListConcreteExecutionsRequest) (*InternalListConcreteExecutionsResponse, error)
 		ListCurrentExecutions(ctx context.Context, request *ListCurrentExecutionsRequest) (*ListCurrentExecutionsResponse, error)
+
+		// Active cluster selection policy related methods
+		GetActiveClusterSelectionPolicy(ctx context.Context, domainID, wfID, rID string) (*DataBlob, error)
 	}
 
 	// HistoryStore is to manager workflow history events
@@ -270,6 +273,7 @@ type (
 		CompletionEventBatchID             int64
 		CompletionEvent                    *DataBlob
 		TaskList                           string
+		TaskListKind                       types.TaskListKind
 		WorkflowTypeName                   string
 		WorkflowTimeout                    time.Duration
 		DecisionStartToCloseTimeout        time.Duration
@@ -312,10 +316,13 @@ type (
 		NonRetriableErrors []string
 		BranchToken        []byte
 		CronSchedule       string
+		CronOverlapPolicy  types.CronOverlapPolicy
 		ExpirationInterval time.Duration
 		Memo               map[string][]byte
 		SearchAttributes   map[string][]byte
 		PartitionConfig    map[string]string
+
+		ActiveClusterSelectionPolicy *DataBlob
 
 		// attributes which are not related to mutable state at all
 		HistorySize int64
@@ -795,11 +802,17 @@ type (
 		AsyncWorkflowsConfig     *DataBlob
 	}
 
+	InternalDomainReplicationConfig struct {
+		Clusters             []*ClusterReplicationConfig
+		ActiveClusterName    string
+		ActiveClustersConfig *DataBlob
+	}
+
 	// InternalCreateDomainRequest is used to create the domain
 	InternalCreateDomainRequest struct {
 		Info              *DomainInfo
 		Config            *InternalDomainConfig
-		ReplicationConfig *DomainReplicationConfig
+		ReplicationConfig *InternalDomainReplicationConfig
 		IsGlobalDomain    bool
 		ConfigVersion     int64
 		FailoverVersion   int64
@@ -811,7 +824,7 @@ type (
 	InternalGetDomainResponse struct {
 		Info                        *DomainInfo
 		Config                      *InternalDomainConfig
-		ReplicationConfig           *DomainReplicationConfig
+		ReplicationConfig           *InternalDomainReplicationConfig
 		IsGlobalDomain              bool
 		ConfigVersion               int64
 		FailoverVersion             int64
@@ -826,7 +839,7 @@ type (
 	InternalUpdateDomainRequest struct {
 		Info                        *DomainInfo
 		Config                      *InternalDomainConfig
-		ReplicationConfig           *DomainReplicationConfig
+		ReplicationConfig           *InternalDomainReplicationConfig
 		ConfigVersion               int64
 		FailoverVersion             int64
 		FailoverNotificationVersion int64

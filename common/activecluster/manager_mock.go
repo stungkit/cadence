@@ -57,19 +57,33 @@ func (mr *MockManagerMockRecorder) ClusterNameForFailoverVersion(failoverVersion
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClusterNameForFailoverVersion", reflect.TypeOf((*MockManager)(nil).ClusterNameForFailoverVersion), failoverVersion, domainID)
 }
 
-// FailoverVersionOfNewWorkflow mocks base method.
-func (m *MockManager) FailoverVersionOfNewWorkflow(ctx context.Context, req *types.HistoryStartWorkflowExecutionRequest) (int64, error) {
+// CurrentRegion mocks base method.
+func (m *MockManager) CurrentRegion() string {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FailoverVersionOfNewWorkflow", ctx, req)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "CurrentRegion")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// CurrentRegion indicates an expected call of CurrentRegion.
+func (mr *MockManagerMockRecorder) CurrentRegion() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CurrentRegion", reflect.TypeOf((*MockManager)(nil).CurrentRegion))
+}
+
+// LookupNewWorkflow mocks base method.
+func (m *MockManager) LookupNewWorkflow(ctx context.Context, domainID string, policy *types.ActiveClusterSelectionPolicy) (*LookupResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LookupNewWorkflow", ctx, domainID, policy)
+	ret0, _ := ret[0].(*LookupResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// FailoverVersionOfNewWorkflow indicates an expected call of FailoverVersionOfNewWorkflow.
-func (mr *MockManagerMockRecorder) FailoverVersionOfNewWorkflow(ctx, req any) *gomock.Call {
+// LookupNewWorkflow indicates an expected call of LookupNewWorkflow.
+func (mr *MockManagerMockRecorder) LookupNewWorkflow(ctx, domainID, policy any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailoverVersionOfNewWorkflow", reflect.TypeOf((*MockManager)(nil).FailoverVersionOfNewWorkflow), ctx, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LookupNewWorkflow", reflect.TypeOf((*MockManager)(nil).LookupNewWorkflow), ctx, domainID, policy)
 }
 
 // LookupWorkflow mocks base method.
@@ -121,6 +135,20 @@ func (m *MockManager) Stop() {
 func (mr *MockManagerMockRecorder) Stop() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockManager)(nil).Stop))
+}
+
+// SupportedExternalEntityType mocks base method.
+func (m *MockManager) SupportedExternalEntityType(entityType string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SupportedExternalEntityType", entityType)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// SupportedExternalEntityType indicates an expected call of SupportedExternalEntityType.
+func (mr *MockManagerMockRecorder) SupportedExternalEntityType(entityType any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SupportedExternalEntityType", reflect.TypeOf((*MockManager)(nil).SupportedExternalEntityType), entityType)
 }
 
 // UnregisterChangeCallback mocks base method.

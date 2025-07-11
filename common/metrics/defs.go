@@ -305,6 +305,8 @@ const (
 	PersistenceUpdateDynamicConfigScope
 	// PersistenceShardRequestCountScope tracks number of persistence calls made to each shard
 	PersistenceShardRequestCountScope
+	// PersistenceGetActiveClusterSelectionPolicyScope tracks GetActiveClusterSelectionPolicy calls made by service to persistence layer
+	PersistenceGetActiveClusterSelectionPolicyScope
 
 	// ResolverHostNotFoundScope is a simple low level error indicating a lookup failed in the membership resolver
 	ResolverHostNotFoundScope
@@ -1143,6 +1145,8 @@ const (
 	TaskPriorityAssignerScope
 	// TransferQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
 	TransferQueueProcessorScope
+	// TransferQueueProcessorV2Scope is the scope used by all metric emitted by transfer queue processor
+	TransferQueueProcessorV2Scope
 	// TransferActiveQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
 	TransferActiveQueueProcessorScope
 	// TransferStandbyQueueProcessorScope is the scope used by all metric emitted by transfer queue processor
@@ -1197,6 +1201,8 @@ const (
 	TransferStandbyTaskApplyParentClosePolicyScope
 	// TimerQueueProcessorScope is the scope used by all metric emitted by timer queue processor
 	TimerQueueProcessorScope
+	// TimerQueueProcessorV2Scope is the scope used by all metric emitted by timer queue processor
+	TimerQueueProcessorV2Scope
 	// TimerActiveQueueProcessorScope is the scope used by all metric emitted by timer queue processor
 	TimerActiveQueueProcessorScope
 	// TimerQueueProcessorScope is the scope used by all metric emitted by timer queue processor
@@ -1329,6 +1335,8 @@ const (
 	HistoryWorkflowCacheScope
 	// HistoryFlushBufferedEventsScope is the scope used by history when flushing buffered events
 	HistoryFlushBufferedEventsScope
+	// HistoryTaskSchedulerMigrationScope is the scope used by history task scheduler migration
+	HistoryTaskSchedulerMigrationScope
 
 	NumHistoryScopes
 )
@@ -1522,6 +1530,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		PersistenceFetchDynamicConfigScope:                       {operation: "FetchDynamicConfig"},
 		PersistenceUpdateDynamicConfigScope:                      {operation: "UpdateDynamicConfig"},
 		PersistenceShardRequestCountScope:                        {operation: "ShardIdPersistenceRequest"},
+		PersistenceGetActiveClusterSelectionPolicyScope:          {operation: "GetActiveClusterSelectionPolicy"},
 		ResolverHostNotFoundScope:                                {operation: "ResolverHostNotFound"},
 
 		ClusterMetadataArchivalConfigScope: {operation: "ArchivalConfig"},
@@ -1940,6 +1949,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		HistoryRatelimitUpdateScope:                                     {operation: "RatelimitUpdate"},
 		TaskPriorityAssignerScope:                                       {operation: "TaskPriorityAssigner"},
 		TransferQueueProcessorScope:                                     {operation: "TransferQueueProcessor"},
+		TransferQueueProcessorV2Scope:                                   {operation: "TransferQueueProcessorV2"},
 		TransferActiveQueueProcessorScope:                               {operation: "TransferActiveQueueProcessor"},
 		TransferStandbyQueueProcessorScope:                              {operation: "TransferStandbyQueueProcessor"},
 		TransferActiveTaskActivityScope:                                 {operation: "TransferActiveTaskActivity"},
@@ -1967,6 +1977,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		TransferStandbyTaskRecordChildExecutionCompletedScope:           {operation: "TransferStandbyTaskRecordChildExecutionCompleted"},
 		TransferStandbyTaskApplyParentClosePolicyScope:                  {operation: "TransferStandbyTaskApplyParentClosePolicy"},
 		TimerQueueProcessorScope:                                        {operation: "TimerQueueProcessor"},
+		TimerQueueProcessorV2Scope:                                      {operation: "TimerQueueProcessorV2"},
 		TimerActiveQueueProcessorScope:                                  {operation: "TimerActiveQueueProcessor"},
 		TimerStandbyQueueProcessorScope:                                 {operation: "TimerStandbyQueueProcessor"},
 		TimerActiveTaskActivityTimeoutScope:                             {operation: "TimerActiveTaskActivityTimeout"},
@@ -2030,6 +2041,7 @@ var ScopeDefs = map[ServiceIdx]map[int]scopeDefinition{
 		HistoryExecutionCacheScope:                                      {operation: "HistoryExecutionCache"},
 		HistoryWorkflowCacheScope:                                       {operation: "HistoryWorkflowCache"},
 		HistoryFlushBufferedEventsScope:                                 {operation: "HistoryFlushBufferedEvents"},
+		HistoryTaskSchedulerMigrationScope:                              {operation: "HistoryTaskSchedulerMigration"},
 	},
 	// Matching Scope Names
 	Matching: {
@@ -2260,6 +2272,7 @@ const (
 
 	// common metrics that are emitted per task list
 	CadenceRequestsPerTaskList
+	CadenceRequestsPerTaskListWithoutRollup
 	CadenceFailuresPerTaskList
 	CadenceLatencyPerTaskList
 	CadenceErrBadRequestPerTaskListCounter
@@ -2355,6 +2368,9 @@ const (
 	TaskProcessingLatency
 	TaskQueueLatency
 	ScheduleToStartHistoryQueueLatencyPerTaskList
+	TaskRequestsOldScheduler
+	TaskRequestsNewScheduler
+	PendingTaskGauge
 
 	TaskRequestsPerDomain
 	TaskLatencyPerDomain
@@ -2371,6 +2387,8 @@ const (
 	TaskLimitExceededCounterPerDomain
 	TaskProcessingLatencyPerDomain
 	TaskQueueLatencyPerDomain
+	TaskScheduleLatencyPerDomain
+	TaskEnqueueToFetchLatency
 	TransferTaskMissingEventCounterPerDomain
 	ReplicationTasksAppliedPerDomain
 	WorkflowTerminateCounterPerDomain
@@ -2392,6 +2410,7 @@ const (
 	ProcessingQueueSelectedDomainSplitCounter
 	ProcessingQueueRandomSplitCounter
 	ProcessingQueueThrottledCounter
+	CorruptedHistoryTaskCounter
 
 	QueueValidatorLostTaskCounter
 	QueueValidatorDropTaskCounter
@@ -2973,6 +2992,9 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		CadenceRequestsPerTaskList: {
 			metricName: "cadence_requests_per_tl", metricRollupName: "cadence_requests", metricType: Counter,
 		},
+		CadenceRequestsPerTaskListWithoutRollup: {
+			metricName: "cadence_requests_per_tl", metricType: Counter,
+		},
 		CadenceFailuresPerTaskList: {
 			metricName: "cadence_errors_per_tl", metricRollupName: "cadence_errors", metricType: Counter,
 		},
@@ -3099,6 +3121,9 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		TaskProcessingLatency:    {metricName: "task_latency_processing", metricType: Timer},
 		TaskQueueLatency:         {metricName: "task_latency_queue", metricType: Timer},
 		ScheduleToStartHistoryQueueLatencyPerTaskList: {metricName: "schedule_to_start_history_queue_latency_per_tl", metricType: Timer},
+		TaskRequestsOldScheduler:                      {metricName: "task_requests_old_scheduler", metricType: Counter},
+		TaskRequestsNewScheduler:                      {metricName: "task_requests_new_scheduler", metricType: Counter},
+		PendingTaskGauge:                              {metricName: "pending_task_gauge", metricType: Gauge},
 
 		// per domain task metrics
 
@@ -3117,8 +3142,10 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		TaskLimitExceededCounterPerDomain:        {metricName: "task_errors_limit_exceeded_counter_per_domain", metricRollupName: "task_errors_limit_exceeded_counter", metricType: Counter},
 		TaskProcessingLatencyPerDomain:           {metricName: "task_latency_processing_per_domain", metricRollupName: "task_latency_processing", metricType: Timer},
 		TaskQueueLatencyPerDomain:                {metricName: "task_latency_queue_per_domain", metricRollupName: "task_latency_queue", metricType: Timer},
+		TaskScheduleLatencyPerDomain:             {metricName: "task_latency_schedule_per_domain", metricRollupName: "task_latency_schedule", metricType: Histogram, buckets: HistoryTaskLatencyBuckets},
+		TaskEnqueueToFetchLatency:                {metricName: "task_latency_enqueue_to_fetch", metricType: Histogram, buckets: HistoryTaskLatencyBuckets},
 		TransferTaskMissingEventCounterPerDomain: {metricName: "transfer_task_missing_event_counter_per_domain", metricRollupName: "transfer_task_missing_event_counter", metricType: Counter},
-		ReplicationTasksAppliedPerDomain:         {metricName: "replication_tasks_applied_per_domain", metricRollupName: "replication_tasks_applied", metricType: Counter},
+		ReplicationTasksAppliedPerDomain:         {metricName: "replication_tasks_applied_per_domain", metricType: Counter},
 		WorkflowTerminateCounterPerDomain:        {metricName: "workflow_terminate_counter_per_domain", metricRollupName: "workflow_terminate_counter", metricType: Counter},
 		TaskSchedulerAllowedCounterPerDomain:     {metricName: "task_scheduler_allowed_counter_per_domain", metricRollupName: "task_scheduler_allowed_counter", metricType: Counter},
 		TaskSchedulerThrottledCounterPerDomain:   {metricName: "task_scheduler_throttled_counter_per_domain", metricRollupName: "task_scheduler_throttled_counter", metricType: Counter},
@@ -3137,6 +3164,7 @@ var MetricDefs = map[ServiceIdx]map[int]metricDefinition{
 		ProcessingQueueSelectedDomainSplitCounter:                    {metricName: "processing_queue_selected_domain_split_counter", metricType: Counter},
 		ProcessingQueueRandomSplitCounter:                            {metricName: "processing_queue_random_split_counter", metricType: Counter},
 		ProcessingQueueThrottledCounter:                              {metricName: "processing_queue_throttled_counter", metricType: Counter},
+		CorruptedHistoryTaskCounter:                                  {metricName: "corrupted_history_task_counter", metricType: Counter},
 		QueueValidatorLostTaskCounter:                                {metricName: "queue_validator_lost_task_counter", metricType: Counter},
 		QueueValidatorDropTaskCounter:                                {metricName: "queue_validator_drop_task_counter", metricType: Counter},
 		QueueValidatorInvalidLoadCounter:                             {metricName: "queue_validator_invalid_load_counter", metricType: Counter},
@@ -3627,6 +3655,27 @@ var (
 		120 * time.Hour,
 		144 * time.Hour,
 		168 * time.Hour, // one week
+	})
+
+	HistoryTaskLatencyBuckets = tally.DurationBuckets([]time.Duration{
+		1 * time.Millisecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		20 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		2 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+		30 * time.Second,
+		1 * time.Minute,
+		5 * time.Minute,
+		10 * time.Minute,
+		1 * time.Hour,
 	})
 )
 

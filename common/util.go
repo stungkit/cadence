@@ -121,6 +121,7 @@ var (
 	// ErrDecisionResultCountTooLarge error for decision result count exceeds limit
 	ErrDecisionResultCountTooLarge = &types.BadRequestError{Message: "Decision result count exceeds limit."}
 	stickyTaskListMetricTag        = metrics.TaskListTag("__sticky__")
+	ephemeralTaskListMetricTag     = metrics.TaskListTag("__ephemeral__")
 )
 
 // AwaitWaitGroup calls Wait on the given wait
@@ -528,7 +529,7 @@ func CreateHistoryStartWorkflowRequest(
 			delayedStartTime := now.Add(time.Second * time.Duration(delayStartSeconds))
 			var err error
 			firstDecisionTaskBackoffSeconds, err = backoff.GetBackoffForNextScheduleInSeconds(
-				startRequest.GetCronSchedule(), delayedStartTime, delayedStartTime, jitterStartSeconds)
+				startRequest.GetCronSchedule(), delayedStartTime, delayedStartTime, jitterStartSeconds, startRequest.GetCronOverlapPolicy())
 			if err != nil {
 				return nil, err
 			}
@@ -985,11 +986,14 @@ func NewPerTaskListScope(
 	if domainName != "" {
 		domainTag = metrics.DomainTag(domainName)
 	}
-	if taskListName != "" && taskListKind != types.TaskListKindSticky {
+	if taskListName != "" && taskListKind == types.TaskListKindNormal {
 		taskListTag = metrics.TaskListTag(taskListName)
 	}
 	if taskListKind == types.TaskListKindSticky {
 		taskListTag = stickyTaskListMetricTag
+	}
+	if taskListKind == types.TaskListKindEphemeral {
+		taskListTag = ephemeralTaskListMetricTag
 	}
 	return client.Scope(scopeIdx, domainTag, taskListTag)
 }

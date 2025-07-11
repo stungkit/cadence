@@ -963,6 +963,7 @@ const (
 	// Default value: 2 // 3 levels, start from 0
 	// Allowed filters: N/A
 	QueueProcessorSplitMaxLevel
+	QueueMaxPendingTaskCount
 	// TimerTaskBatchSize is batch size for timer processor to process tasks
 	// KeyName: history.timerTaskBatchSize
 	// Value type: Int
@@ -1525,6 +1526,7 @@ const (
 	TestGetBoolPropertyFilteredByTaskListInfoKey
 	TestGetBoolPropertyFilteredByDomainKey
 	TestGetBoolPropertyFilteredByDomainIDAndWorkflowIDKey
+	TestGetBoolPropertyFilteredByShardIDKey
 
 	// key for common & admin
 
@@ -1640,12 +1642,6 @@ const (
 	// Default value: true
 	// Allowed filters: N/A
 	EnableQueryAttributeValidation
-	// EnableDomainDeletion is a feature flag to enable deletion of the domains.
-	// This feature flag will be removed after the change is rolled out in all the waves.
-	// KeyName: system.enableDomainDeletion
-	// Value type: bool
-	// Default value: false
-	EnableDomainDeletion
 
 	// key for matching
 
@@ -1677,6 +1673,7 @@ const (
 
 	MatchingEnableGetNumberOfPartitionsFromCache
 	MatchingEnableAdaptiveScaler
+	MatchingEnablePartitionEmptyCheck
 
 	// key for history
 
@@ -2018,7 +2015,7 @@ const (
 	// Default value: false
 	Lockdown
 
-	// PendingActivityValidationEnabled is feature flag if pending activity count validation is enabled
+	// EnablePendingActivityValidation is feature flag if pending activity count validation is enabled
 	// KeyName: limit.pendingActivityCount.enabled
 	// Value type: bool
 	// Default value: false
@@ -2101,6 +2098,9 @@ const (
 
 	DisableTransferFailoverQueue
 	DisableTimerFailoverQueue
+
+	EnableTransferQueueV2
+	EnableTimerQueueV2
 
 	// LastBoolKey must be the last one in this const group
 	LastBoolKey
@@ -2412,6 +2412,12 @@ const (
 	// Default value: 0
 	// Allowed filters: N/A
 	FrontendShutdownDrainDuration
+	// FrontendWarmupDuration is the duration before a frontend host reports its status as healthy
+	// KeyName: frontend.warmupDuration
+	// Value type: Duration
+	// Default value: 30s
+	// Allowed filters: N/A
+	FrontendWarmupDuration
 	// FrontendFailoverCoolDown is duration between two domain failvoers
 	// KeyName: frontend.failoverCoolDown
 	// Value type: Duration
@@ -3531,6 +3537,11 @@ var IntKeys = map[IntKey]DynamicInt{
 		Description:  "QueueProcessorSplitMaxLevel is the max processing queue level",
 		DefaultValue: 2, // 3 levels, start from 0
 	},
+	QueueMaxPendingTaskCount: {
+		KeyName:      "history.queueMaxPendingTaskCount",
+		Description:  "QueueMaxPendingTaskCount is the max number of pending tasks in the queue",
+		DefaultValue: 10000,
+	},
 	TimerTaskBatchSize: {
 		KeyName:      "history.timerTaskBatchSize",
 		Description:  "TimerTaskBatchSize is batch size for timer processor to process tasks",
@@ -4030,6 +4041,12 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		DefaultValue: false,
 		Filters:      nil,
 	},
+	TestGetBoolPropertyFilteredByShardIDKey: {
+		KeyName:      "testGetBoolPropertyFilteredByShardIDKey",
+		Description:  "",
+		DefaultValue: false,
+		Filters:      []Filter{ShardID},
+	},
 	EnableVisibilitySampling: {
 		KeyName:      "system.enableVisibilitySampling",
 		Description:  "EnableVisibilitySampling is key for enable visibility sampling for basic(DB based) visibility",
@@ -4132,11 +4149,6 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		Description:  "EnableQueryAttributeValidation enables validation of queries' search attributes against the dynamic config whitelist",
 		DefaultValue: true,
 	},
-	EnableDomainDeletion: {
-		KeyName:      "frontend.enableDomainDeletion",
-		Description:  "EnableDomainDeletion enables Delete Domain API to remove domain records from the persistence layer.",
-		DefaultValue: false,
-	},
 	MatchingEnableSyncMatch: {
 		KeyName:      "matching.enableSyncMatch",
 		Filters:      []Filter{DomainName, TaskListName, TaskType},
@@ -4170,6 +4182,12 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		KeyName:      "matching.enableAdaptiveScaler",
 		Filters:      []Filter{DomainName, TaskListName, TaskType},
 		Description:  "MatchingEnableAdaptiveScaler is to enable adaptive task list scaling",
+		DefaultValue: false,
+	},
+	MatchingEnablePartitionEmptyCheck: {
+		KeyName:      "matching.enablePartitionEmptyCheck",
+		Filters:      []Filter{DomainName, TaskListName, TaskType},
+		Description:  "MatchingEnablePartitionEmptyCheck enables using TaskListStatus.empty to check if a partition is empty",
 		DefaultValue: false,
 	},
 	EventsCacheGlobalEnable: {
@@ -4574,6 +4592,18 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		Description:  "DisableTimerFailoverQueue is to disable timer failover queue",
 		DefaultValue: false,
 	},
+	EnableTransferQueueV2: {
+		KeyName:      "history.enableTransferQueueV2",
+		Description:  "EnableTransferQueueV2 is to enable transfer queue v2",
+		Filters:      []Filter{ShardID},
+		DefaultValue: false,
+	},
+	EnableTimerQueueV2: {
+		KeyName:      "history.enableTimerQueueV2",
+		Description:  "EnableTimerQueueV2 is to enable timer queue v2",
+		Filters:      []Filter{ShardID},
+		DefaultValue: false,
+	},
 }
 
 var FloatKeys = map[FloatKey]DynamicFloat{
@@ -4853,6 +4883,11 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		KeyName:      "frontend.shutdownDrainDuration",
 		Description:  "FrontendShutdownDrainDuration is the duration of traffic drain during shutdown",
 		DefaultValue: 0,
+	},
+	FrontendWarmupDuration: {
+		KeyName:      "frontend.warmupDuration",
+		Description:  "FrontendWarmupDuration is the duration before a frontend host reports its status as healthy",
+		DefaultValue: 30 * time.Second,
 	},
 	FrontendFailoverCoolDown: {
 		KeyName:      "frontend.failoverCoolDown",

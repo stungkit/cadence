@@ -86,6 +86,7 @@ func TestNewConfig(t *testing.T) {
 		"BlobSizeLimitWarn":                           {dynamicproperties.BlobSizeLimitWarn, 30},
 		"ThrottledLogRPS":                             {dynamicproperties.FrontendThrottledLogRPS, 31},
 		"ShutdownDrainDuration":                       {dynamicproperties.FrontendShutdownDrainDuration, time.Duration(32)},
+		"WarmupDuration":                              {dynamicproperties.FrontendWarmupDuration, time.Duration(40)},
 		"EnableDomainNotActiveAutoForwarding":         {dynamicproperties.EnableDomainNotActiveAutoForwarding, true},
 		"EnableGracefulFailover":                      {dynamicproperties.EnableGracefulFailover, false},
 		"DomainFailoverRefreshInterval":               {dynamicproperties.DomainFailoverRefreshInterval, time.Duration(33)},
@@ -106,7 +107,6 @@ func TestNewConfig(t *testing.T) {
 		"GlobalRatelimiterKeyMode":                    {dynamicproperties.FrontendGlobalRatelimiterMode, "disabled"},
 		"GlobalRatelimiterUpdateInterval":             {dynamicproperties.GlobalRatelimiterUpdateInterval, 3 * time.Second},
 		"PinotOptimizedQueryColumns":                  {dynamicproperties.PinotOptimizedQueryColumns, map[string]interface{}{"foo": "bar"}},
-		"EnableDomainDeletion":                        {dynamicproperties.EnableDomainDeletion, false},
 	}
 	domainFields := map[string]configTestCase{
 		"MaxBadBinaryCount":      {dynamicproperties.FrontendMaxBadBinaries, 40},

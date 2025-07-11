@@ -16,7 +16,6 @@ import (
 	gomock "go.uber.org/mock/gomock"
 
 	future "github.com/uber/cadence/common/future"
-	metrics "github.com/uber/cadence/common/metrics"
 	persistence "github.com/uber/cadence/common/persistence"
 	task "github.com/uber/cadence/common/task"
 	types "github.com/uber/cadence/common/types"
@@ -71,6 +70,18 @@ func (m *MockTask) ByteSize() uint64 {
 func (mr *MockTaskMockRecorder) ByteSize() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ByteSize", reflect.TypeOf((*MockTask)(nil).ByteSize))
+}
+
+// Cancel mocks base method.
+func (m *MockTask) Cancel() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Cancel")
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockTaskMockRecorder) Cancel() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockTask)(nil).Cancel))
 }
 
 // Execute mocks base method.
@@ -199,6 +210,20 @@ func (mr *MockTaskMockRecorder) GetTaskID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskID", reflect.TypeOf((*MockTask)(nil).GetTaskID))
 }
 
+// GetTaskKey mocks base method.
+func (m *MockTask) GetTaskKey() persistence.HistoryTaskKey {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskKey")
+	ret0, _ := ret[0].(persistence.HistoryTaskKey)
+	return ret0
+}
+
+// GetTaskKey indicates an expected call of GetTaskKey.
+func (mr *MockTaskMockRecorder) GetTaskKey() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskKey", reflect.TypeOf((*MockTask)(nil).GetTaskKey))
+}
+
 // GetTaskType mocks base method.
 func (m *MockTask) GetTaskType() int {
 	m.ctrl.T.Helper()
@@ -307,6 +332,18 @@ func (m *MockTask) RetryErr(err error) bool {
 func (mr *MockTaskMockRecorder) RetryErr(err any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryErr", reflect.TypeOf((*MockTask)(nil).RetryErr), err)
+}
+
+// SetInitialSubmitTime mocks base method.
+func (m *MockTask) SetInitialSubmitTime(arg0 time.Time) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetInitialSubmitTime", arg0)
+}
+
+// SetInitialSubmitTime indicates an expected call of SetInitialSubmitTime.
+func (mr *MockTaskMockRecorder) SetInitialSubmitTime(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetInitialSubmitTime", reflect.TypeOf((*MockTask)(nil).SetInitialSubmitTime), arg0)
 }
 
 // SetPriority mocks base method.
@@ -466,6 +503,18 @@ func (mr *MockCrossClusterTaskMockRecorder) ByteSize() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ByteSize", reflect.TypeOf((*MockCrossClusterTask)(nil).ByteSize))
 }
 
+// Cancel mocks base method.
+func (m *MockCrossClusterTask) Cancel() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Cancel")
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockCrossClusterTaskMockRecorder) Cancel() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockCrossClusterTask)(nil).Cancel))
+}
+
 // Execute mocks base method.
 func (m *MockCrossClusterTask) Execute() error {
 	m.ctrl.T.Helper()
@@ -605,6 +654,20 @@ func (m *MockCrossClusterTask) GetTaskID() int64 {
 func (mr *MockCrossClusterTaskMockRecorder) GetTaskID() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskID", reflect.TypeOf((*MockCrossClusterTask)(nil).GetTaskID))
+}
+
+// GetTaskKey mocks base method.
+func (m *MockCrossClusterTask) GetTaskKey() persistence.HistoryTaskKey {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskKey")
+	ret0, _ := ret[0].(persistence.HistoryTaskKey)
+	return ret0
+}
+
+// GetTaskKey indicates an expected call of GetTaskKey.
+func (mr *MockCrossClusterTaskMockRecorder) GetTaskKey() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskKey", reflect.TypeOf((*MockCrossClusterTask)(nil).GetTaskKey))
 }
 
 // GetTaskType mocks base method.
@@ -757,6 +820,18 @@ func (m *MockCrossClusterTask) RetryErr(err error) bool {
 func (mr *MockCrossClusterTaskMockRecorder) RetryErr(err any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryErr", reflect.TypeOf((*MockCrossClusterTask)(nil).RetryErr), err)
+}
+
+// SetInitialSubmitTime mocks base method.
+func (m *MockCrossClusterTask) SetInitialSubmitTime(arg0 time.Time) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetInitialSubmitTime", arg0)
+}
+
+// SetInitialSubmitTime indicates an expected call of SetInitialSubmitTime.
+func (mr *MockCrossClusterTaskMockRecorder) SetInitialSubmitTime(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetInitialSubmitTime", reflect.TypeOf((*MockCrossClusterTask)(nil).SetInitialSubmitTime), arg0)
 }
 
 // SetPriority mocks base method.
@@ -929,10 +1004,10 @@ func (m *MockExecutor) EXPECT() *MockExecutorMockRecorder {
 }
 
 // Execute mocks base method.
-func (m *MockExecutor) Execute(task Task) (metrics.Scope, error) {
+func (m *MockExecutor) Execute(task Task) (ExecuteResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Execute", task)
-	ret0, _ := ret[0].(metrics.Scope)
+	ret0, _ := ret[0].(ExecuteResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -1116,6 +1191,18 @@ func (m *MockRedispatcher) Redispatch(targetSize int) {
 func (mr *MockRedispatcherMockRecorder) Redispatch(targetSize any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Redispatch", reflect.TypeOf((*MockRedispatcher)(nil).Redispatch), targetSize)
+}
+
+// RedispatchTask mocks base method.
+func (m *MockRedispatcher) RedispatchTask(arg0 Task, arg1 time.Time) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RedispatchTask", arg0, arg1)
+}
+
+// RedispatchTask indicates an expected call of RedispatchTask.
+func (mr *MockRedispatcherMockRecorder) RedispatchTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RedispatchTask", reflect.TypeOf((*MockRedispatcher)(nil).RedispatchTask), arg0, arg1)
 }
 
 // Size mocks base method.

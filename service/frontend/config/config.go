@@ -61,6 +61,7 @@ type Config struct {
 	EnableQueryAttributeValidation    dynamicproperties.BoolPropertyFn
 	DisallowQuery                     dynamicproperties.BoolPropertyFnWithDomainFilter
 	ShutdownDrainDuration             dynamicproperties.DurationPropertyFn
+	WarmupDuration                    dynamicproperties.DurationPropertyFn
 	Lockdown                          dynamicproperties.BoolPropertyFnWithDomainFilter
 
 	// global ratelimiter config, uses GlobalDomain*RPS for RPS configuration
@@ -69,9 +70,6 @@ type Config struct {
 
 	// isolation configuration
 	EnableTasklistIsolation dynamicproperties.BoolPropertyFnWithDomainFilter
-
-	// domain deletion api feature flag
-	EnableDomainDeletion dynamicproperties.BoolPropertyFn
 
 	// id length limits
 	MaxIDLengthWarnLimit  dynamicproperties.IntPropertyFn
@@ -169,6 +167,7 @@ func NewConfig(dc *dynamicconfig.Collection, numHistoryShards int, isAdvancedVis
 		BlobSizeLimitWarn:                           dc.GetIntPropertyFilteredByDomain(dynamicproperties.BlobSizeLimitWarn),
 		ThrottledLogRPS:                             dc.GetIntProperty(dynamicproperties.FrontendThrottledLogRPS),
 		ShutdownDrainDuration:                       dc.GetDurationProperty(dynamicproperties.FrontendShutdownDrainDuration),
+		WarmupDuration:                              dc.GetDurationProperty(dynamicproperties.FrontendWarmupDuration),
 		EnableDomainNotActiveAutoForwarding:         dc.GetBoolPropertyFilteredByDomain(dynamicproperties.EnableDomainNotActiveAutoForwarding),
 		EnableGracefulFailover:                      dc.GetBoolProperty(dynamicproperties.EnableGracefulFailover),
 		DomainFailoverRefreshInterval:               dc.GetDurationProperty(dynamicproperties.DomainFailoverRefreshInterval),
@@ -187,7 +186,6 @@ func NewConfig(dc *dynamicconfig.Collection, numHistoryShards int, isAdvancedVis
 		EmitSignalNameMetricsTag:                    dc.GetBoolPropertyFilteredByDomain(dynamicproperties.FrontendEmitSignalNameMetricsTag),
 		Lockdown:                                    dc.GetBoolPropertyFilteredByDomain(dynamicproperties.Lockdown),
 		EnableTasklistIsolation:                     dc.GetBoolPropertyFilteredByDomain(dynamicproperties.EnableTasklistIsolation),
-		EnableDomainDeletion:                        dc.GetBoolProperty(dynamicproperties.EnableDomainDeletion),
 		DomainConfig: domain.Config{
 			MaxBadBinaryCount:      dc.GetIntPropertyFilteredByDomain(dynamicproperties.FrontendMaxBadBinaries),
 			MinRetentionDays:       dc.GetIntProperty(dynamicproperties.MinRetentionDays),

@@ -422,14 +422,22 @@ func (t *transferQueueProcessorBase) processQueueCollections() {
 
 		tasks := make(map[task.Key]task.Task)
 		taskChFull := false
+		now := t.shard.GetTimeSource().Now()
 		for _, taskInfo := range transferTaskInfos {
 			if !domainFilter.Filter(taskInfo.GetDomainID()) {
 				t.logger.Debug("transfer task filtered", tag.TaskID(taskInfo.GetTaskID()))
 				continue
 			}
 
+			if persistence.IsTaskCorrupted(taskInfo) {
+				t.logger.Error("Processing queue encountered a corrupted task", tag.Dynamic("task", taskInfo))
+				t.metricsScope.IncCounter(metrics.CorruptedHistoryTaskCounter)
+				continue
+			}
+
 			task := t.taskInitializer(taskInfo)
 			tasks[newTransferTaskKey(taskInfo.GetTaskID())] = task
+			t.metricsScope.RecordHistogramDuration(metrics.TaskEnqueueToFetchLatency, now.Sub(taskInfo.GetVisibilityTimestamp()))
 			submitted, err := t.submitTask(task)
 			if err != nil {
 				// only err here is due to the fact that processor has been shutdown
@@ -528,7 +536,7 @@ func (t *transferQueueProcessorBase) readTasks(
 	var response *persistence.GetHistoryTasksResponse
 	op := func(ctx context.Context) error {
 		var err error
-		response, err = t.shard.GetExecutionManager().GetHistoryTasks(context.Background(), &persistence.GetHistoryTasksRequest{
+		response, err = t.shard.GetExecutionManager().GetHistoryTasks(ctx, &persistence.GetHistoryTasksRequest{
 			TaskCategory:        persistence.HistoryTaskCategoryTransfer,
 			InclusiveMinTaskKey: persistence.NewImmediateTaskKey(readLevel.(transferTaskKey).taskID + 1),
 			ExclusiveMaxTaskKey: persistence.NewImmediateTaskKey(maxReadLevel.(transferTaskKey).taskID + 1),

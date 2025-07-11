@@ -68,19 +68,20 @@ type (
 		sync.Mutex
 		persistence.Task
 
-		shard              shard.Context
-		state              ctask.State
-		priority           int
-		attempt            int
-		timeSource         clock.TimeSource
-		submitTime         time.Time
-		logger             log.Logger
-		eventLogger        eventLogger
-		scope              metrics.Scope // initialized when processing task to make the initialization parallel
-		taskExecutor       Executor
-		taskProcessor      Processor
-		redispatchFn       func(task Task)
-		criticalRetryCount dynamicproperties.IntPropertyFn
+		shard                    shard.Context
+		state                    ctask.State
+		priority                 int
+		attempt                  int
+		timeSource               clock.TimeSource
+		initialSubmitTime        time.Time
+		logger                   log.Logger
+		eventLogger              eventLogger
+		scope                    metrics.Scope // initialized when processing task to make the initialization parallel
+		taskExecutor             Executor
+		taskProcessor            Processor
+		redispatchFn             func(task Task)
+		criticalRetryCount       dynamicproperties.IntPropertyFn
+		isPreviousExecutorActive bool
 
 		// TODO: following three fields should be removed after new task lifecycle is implemented
 		taskFilter        Filter
@@ -115,11 +116,11 @@ func NewHistoryTask(
 		state:              ctask.TaskStatePending,
 		priority:           noPriority,
 		queueType:          queueType,
-		scope:              metrics.NoopScope(metrics.History),
+		scope:              metrics.NoopScope,
 		logger:             logger,
 		eventLogger:        eventLogger,
 		attempt:            0,
-		submitTime:         timeSource.Now(),
+		initialSubmitTime:  timeSource.Now(),
 		timeSource:         timeSource,
 		criticalRetryCount: criticalRetryCount,
 		redispatchFn:       redispatchFn,
@@ -130,6 +131,14 @@ func NewHistoryTask(
 }
 
 func (t *taskImpl) Execute() error {
+	if t.State() != ctask.TaskStatePending {
+		return nil
+	}
+	if t.GetAttempt() == 0 {
+		// domain level metrics for the duration between task being submitted to task scheduler and being executed
+		t.scope.RecordHistogramDuration(metrics.TaskScheduleLatencyPerDomain, time.Since(t.initialSubmitTime))
+	}
+
 	var err error
 	t.shouldProcessTask, err = t.taskFilter(t.Task)
 	if err != nil {
@@ -147,11 +156,24 @@ func (t *taskImpl) Execute() error {
 		t.scope.IncCounter(metrics.TaskRequestsPerDomain)
 		t.scope.RecordTimer(metrics.TaskProcessingLatencyPerDomain, time.Since(executionStartTime))
 	}()
-	t.scope, err = t.taskExecutor.Execute(t)
+	executeResponse, err := t.taskExecutor.Execute(t)
+	t.scope = executeResponse.Scope
+	if t.isPreviousExecutorActive != executeResponse.IsActiveTask {
+		t.resetAttempt()
+	}
+	t.isPreviousExecutorActive = executeResponse.IsActiveTask
 	return err
 }
 
+func (t *taskImpl) resetAttempt() {
+	t.Lock()
+	defer t.Unlock()
+	t.attempt = 0
+}
+
 func (t *taskImpl) HandleErr(err error) (retErr error) {
+	logger := t.logger.Helper()
+
 	defer func() {
 		if retErr != nil {
 			logEvent(t.eventLogger, "Failed to handle error", retErr)
@@ -162,7 +184,7 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 			t.attempt++
 			if t.attempt > t.criticalRetryCount() {
 				t.scope.RecordTimer(metrics.TaskAttemptTimerPerDomain, time.Duration(t.attempt))
-				t.logger.Error("Critical error processing task, retrying.",
+				logger.Error("Critical error processing task, retrying.",
 					tag.Error(err),
 					tag.OperationCritical,
 					tag.TaskType(t.GetTaskType()),
@@ -188,7 +210,7 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 		err == execution.ErrMissingWorkflowStartEvent &&
 		t.shard.GetConfig().EnableDropStuckTaskByDomainID(t.GetDomainID()) { // use domainID here to avoid accessing domainCache
 		t.scope.IncCounter(metrics.TransferTaskMissingEventCounterPerDomain)
-		t.logger.Error("Drop close execution transfer task due to corrupted workflow history", tag.Error(err), tag.LifeCycleProcessingFailed)
+		logger.Error("Drop close execution transfer task due to corrupted workflow history", tag.Error(err), tag.LifeCycleProcessingFailed)
 		return nil
 	}
 
@@ -244,7 +266,7 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 	// the domain cache refeshed and then updated here.
 	var e *types.DomainNotActiveError
 	if errors.As(err, &e) || errors.Is(err, types.DomainNotActiveError{}) {
-		if t.timeSource.Now().Sub(t.submitTime) > 5*cache.DomainCacheRefreshInterval {
+		if t.timeSource.Now().Sub(t.initialSubmitTime) > 5*cache.DomainCacheRefreshInterval {
 			t.scope.IncCounter(metrics.TaskNotActiveCounterPerDomain)
 			// If the domain is *still* not active, drop after a while.
 			return nil
@@ -256,22 +278,27 @@ func (t *taskImpl) HandleErr(err error) (retErr error) {
 	t.scope.IncCounter(metrics.TaskFailuresPerDomain)
 
 	if _, ok := err.(*persistence.CurrentWorkflowConditionFailedError); ok {
-		t.logger.Error("More than 2 workflow are running.", tag.Error(err), tag.LifeCycleProcessingFailed)
+		logger.Error("More than 2 workflow are running.", tag.Error(err), tag.LifeCycleProcessingFailed)
 		return nil
 	}
 
-	if t.GetAttempt() > stickyTaskMaxRetryCount && common.IsStickyTaskConditionError(err) {
+	attempt := t.GetAttempt()
+	if attempt > stickyTaskMaxRetryCount && common.IsStickyTaskConditionError(err) {
 		// sticky task could end up into endless loop in rare cases and
 		// cause worker to keep getting decision timeout unless restart.
 		// return nil here to break the endless loop
 		return nil
 	}
 
-	t.logger.Error("Fail to process task", tag.Error(err), tag.LifeCycleProcessingFailed)
+	logger.Error("Fail to process task", tag.Error(err), tag.LifeCycleProcessingFailed, tag.AttemptCount(attempt))
 	return err
 }
 
 func (t *taskImpl) RetryErr(err error) bool {
+	if t.State() != ctask.TaskStatePending {
+		return false
+	}
+
 	var errShardClosed *shard.ErrShardClosed
 	if errors.As(err, &errShardClosed) || err == errWorkflowBusy || isRedispatchErr(err) || err == ErrTaskPendingActive || common.IsContextTimeoutError(err) {
 		return false
@@ -286,10 +313,14 @@ func (t *taskImpl) Ack() {
 	t.Lock()
 	defer t.Unlock()
 
+	if t.state != ctask.TaskStatePending {
+		return
+	}
+
 	t.state = ctask.TaskStateAcked
 	if t.shouldProcessTask {
 		t.scope.RecordTimer(metrics.TaskAttemptTimerPerDomain, time.Duration(t.attempt))
-		t.scope.RecordTimer(metrics.TaskLatencyPerDomain, time.Since(t.submitTime))
+		t.scope.RecordTimer(metrics.TaskLatencyPerDomain, time.Since(t.initialSubmitTime))
 		t.scope.RecordTimer(metrics.TaskQueueLatencyPerDomain, time.Since(t.GetVisibilityTimestamp()))
 
 	}
@@ -301,11 +332,11 @@ func (t *taskImpl) Ack() {
 }
 
 func (t *taskImpl) Nack() {
-	logEvent(t.eventLogger, "Nacked task")
+	if t.State() != ctask.TaskStatePending {
+		return
+	}
 
-	t.Lock()
-	t.state = ctask.TaskStateNacked
-	t.Unlock()
+	logEvent(t.eventLogger, "Nacked task")
 
 	if t.shouldResubmitOnNack() {
 		if submitted, _ := t.taskProcessor.TrySubmit(t); submitted {
@@ -314,6 +345,15 @@ func (t *taskImpl) Nack() {
 	}
 
 	t.redispatchFn(t)
+}
+
+func (t *taskImpl) Cancel() {
+	t.Lock()
+	defer t.Unlock()
+
+	if t.state == ctask.TaskStatePending {
+		t.state = ctask.TaskStateCanceled
+	}
 }
 
 func (t *taskImpl) State() ctask.State {
@@ -354,6 +394,13 @@ func (t *taskImpl) GetInfo() persistence.Task {
 
 func (t *taskImpl) GetQueueType() QueueType {
 	return t.queueType
+}
+
+func (t *taskImpl) SetInitialSubmitTime(submitTime time.Time) {
+	t.Lock()
+	defer t.Unlock()
+
+	t.initialSubmitTime = submitTime
 }
 
 func (t *taskImpl) shouldResubmitOnNack() bool {

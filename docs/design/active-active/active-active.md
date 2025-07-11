@@ -182,10 +182,11 @@ NOTE: Long running workflows of active-passive domains like `wf3` will required 
 Domain records will have a new field called ActiveClusters which contains the information about region to cluster mapping and failover versions of the clusters. Active-active domains will have this field set and ActiveClusterName field will be empty.
 Active-passive domains will not have this field set and ActiveClusterName field will be set.
 
+Domain replication config:
 ```
 {
     // Clusters can be a subset of clusters in the group.
-    Clusters: 	    [us-west, us-east, eu-west, eu-central],
+    Clusters: 	    [cluster0, cluster1, cluster2, cluster3],
 
     // Active clusters can have at most one from each region. Remaining clusters will be considered passive.
     ActiveClusters:  {
@@ -246,6 +247,7 @@ This table is not domain specific so failover versions are not the failover vers
 
 Workflows associated with an entity will have task versions as indicated in the table above. Since these workflows are bound to a region, we cannot use the cluster failover versions.
 
+Entity updates are replicated to all clusters and history engines will subscribe to these updates to notify task queues. This is similar to how domain failover changes are handled today. Notifying the task queues wake up the queues to resume processing and they will be able to apply active/standby logic based on new failover versions.
 
 
 ### Failover scenarios
@@ -266,11 +268,11 @@ ActiveClusters:  {
     RegionToClusterMap: {
         us-west: {
             ActiveClusterName: cluster0,
-            FailoverVersion: 1,
+            FailoverVersion: 0,
         },
         us-east: {
             ActiveClusterName: cluster3,
-            FailoverVersion: 3,
+            FailoverVersion: 6,
         },
     },
 }
@@ -280,21 +282,21 @@ After failover:
 ```
 ActiveClusters:  {
     RegionToClusterMap: {
-        us-west: { // failover version of us-west region is changed to 3 so that it maps to us-east region.
+        us-west: { // failover version of us-west region is changed to 6 so that it maps to us-east region.
             ActiveClusterName: cluster3,
-            FailoverVersion: 3,
+            FailoverVersion: 6,
         },
         us-east: {
             ActiveClusterName: cluster3,
-            FailoverVersion: 3,
+            FailoverVersion: 6,
         },
     },
 }
 ```
 
 Failover version to cluster mapping:
-- Workflows whose task version resolves to region us-west will start using version 3 from now on.
-- Workflows whose task version resolves to region us-east will continue using version 3.
+- Workflows whose task version resolves to region us-west will start using version 6 from now on.
+- Workflows whose task version resolves to region us-east will continue using version 6.
 
 
 **2. Within region failover (changing active cluster of a region):**
@@ -309,11 +311,11 @@ ActiveClusters:  {
     RegionToClusterMap: {
         us-west: {
             ActiveClusterName: cluster0,
-            FailoverVersion: 1,
+            FailoverVersion: 0,
         },
         us-east: {
             ActiveClusterName: cluster3,
-            FailoverVersion: 3,
+            FailoverVersion: 6,
         },
     },
 }
@@ -329,7 +331,7 @@ ActiveClusters:  {
         },
         us-east: {
             ActiveClusterName: cluster3,
-            FailoverVersion: 3,
+            FailoverVersion: 6,
         },
     },
 }
@@ -337,10 +339,10 @@ ActiveClusters:  {
 
 Failover version to cluster mapping:
 - Workflows whose task version resolves to region us-west will start using version 2 from now on.
-- Workflows whose task version resolves to region us-east will continue using version 3.
+- Workflows whose task version resolves to region us-east will continue using version 6.
 
 
-**3. Entity failover:**
+**3. External entity failover:**
 
 The external entity support is optional. If no entity is provided, the workflow will be associated with the region that the workflow is created on and they will be failed over as explained in the previous section.
 
@@ -358,7 +360,7 @@ After failover:
 |------------|-----------|--------|------------------|-------------|
 | user-location | seattle   | us-east    | 3                |             |
 
-Notice that the failover version is updated to 3. This means that all workflows associated with this entity will be considered active in us-east region from now on. Since there can only be one active cluster per region, the coresponding workflows will be active in cluster3.
+Notice that the failover version is updated to 3. This means that all workflows associated with this entity will be considered active in us-east region from now on. Since there can only be one active cluster per region, the corresponding workflows will be active in cluster3.
 
 Failover version to cluster mapping:
 There's no change in the failover version to cluster mapping in entity failovers. Same versions map to same clusters as before.
@@ -439,23 +441,6 @@ Note: Async API calls might be ok without forwarding (current state). We want th
   - RespondActivityTaskFailedByID
 
 
-### Entity mapping updates
-
-There are two categories of entity types:
-
-1. Domain/region entities
-2. User defined entities
-
-Domain/region entities are entities that are managed by default domain plugin as part of typical domain operations.
-- Domain creation: Populate EntityActiveRegion table with `{domain}.{region}` for all regions in `ActiveClusters` list.
-- Domain update: Update EntityActiveRegion table with `{domain}.{region}` for all regions in `ActiveClusters` list. Increment failover version based on region failover version and increment value from cluster group configuration.
-- Domain deletion: Delete all relevant rows from EntityActiveRegion table.
-
-User defined entities are entities that are defined by the user and are used to associate workflows with an external entity. Corresponding watcher implementation will be provided by the user. It should perform CRUD operations on EntityActiveRegion table following similar pattern to domain/region entities.
-
-Entity updates are replicated to all clusters and history service will subscribe to these updates to notify task queues. This is similar to how domain failover changes are handled today. Notifying the task queues wake up the queues to resume processing and they will be able to apply active/standby logic based on new failover versions.
-
-
 ## Limitations
 
 Below is a list of limitations of active-active domains.
@@ -470,3 +455,7 @@ Conflict resolution mechanism should take care of this by terminating one of the
 - **External entity cardinality:** All cadence frontend and history services will have to make quick decisions on which cluster a workflow is active in. This requires caching all the domain data (already done for active-passive domains) and also caching the new entity region lookup table. This cache should be manageable in terms of memory usage so there will be a limit to the number of entities. Actual limit is going to be configurable based on available memory but ideally it should be in the order of thousands.
 
 - **Graceful failover:** Graceful failover is not supported for active-active domains. It is not a mode that is frequently used for active-passive domains either.
+
+## Defining a new external entity type
+
+// TODO(active-active): define external entity providers as plugins. See resource_impl.go

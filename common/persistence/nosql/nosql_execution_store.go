@@ -107,22 +107,25 @@ func (d *nosqlExecutionStore) CreateWorkflowExecution(
 	}
 
 	workflowRequests := d.prepareWorkflowRequestRows(domainID, workflowID, runID, newWorkflow.WorkflowRequests, nil)
+	workflowRequestsWriteRequest := &nosqlplugin.WorkflowRequestsWriteRequest{
+		Rows:      workflowRequests,
+		WriteMode: workflowRequestWriteMode,
+	}
+
+	activeClusterSelectionPolicyRow := d.prepareActiveClusterSelectionPolicyRow(domainID, workflowID, runID, executionInfo.ActiveClusterSelectionPolicy)
 
 	shardCondition := &nosqlplugin.ShardCondition{
 		ShardID: d.shardID,
 		RangeID: request.RangeID,
 	}
 
-	workflowRequestsWriteRequest := &nosqlplugin.WorkflowRequestsWriteRequest{
-		Rows:      workflowRequests,
-		WriteMode: workflowRequestWriteMode,
-	}
-
 	err = d.db.InsertWorkflowExecutionWithTasks(
 		ctx,
 		workflowRequestsWriteRequest,
-		currentWorkflowWriteReq, workflowExecutionWriteReq,
+		currentWorkflowWriteReq,
+		workflowExecutionWriteReq,
 		tasksByCategory,
+		activeClusterSelectionPolicyRow,
 		shardCondition,
 	)
 	if err != nil {
@@ -917,4 +920,26 @@ func (d *nosqlExecutionStore) rangeCompleteImmediateHistoryTask(
 		return nil, &types.BadRequestError{Message: fmt.Sprintf("Unknown task category: %v", request.TaskCategory.ID())}
 	}
 	return &persistence.RangeCompleteHistoryTaskResponse{TasksCompleted: persistence.UnknownNumRowsAffected}, nil
+}
+
+func (d *nosqlExecutionStore) GetActiveClusterSelectionPolicy(
+	ctx context.Context,
+	domainID, wfID, rID string,
+) (*persistence.DataBlob, error) {
+	row, err := d.db.SelectActiveClusterSelectionPolicy(ctx, d.shardID, domainID, wfID, rID)
+	if err != nil {
+		if d.db.IsNotFoundError(err) {
+			return nil, &types.EntityNotExistsError{
+				Message: fmt.Sprintf("Active cluster selection policy not found.  DomainId: %v, WorkflowId: %v, RunId: %v", domainID, wfID, rID),
+			}
+		}
+
+		return nil, convertCommonErrors(d.db, "GetActiveClusterSelectionPolicy", err)
+	}
+
+	if row == nil {
+		return nil, nil
+	}
+
+	return row.Policy, nil
 }
